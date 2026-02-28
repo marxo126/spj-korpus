@@ -9,11 +9,21 @@
 .security-key
 logs/security/
 
-# Project data (large binary files)
+# Project data (large/binary files)
 data/videos/
 data/pose/
+data/annotations/
+data/subtitles/
+data/training/
+data/models/
+data/evaluations/
+data/inventory.csv
 models/
 *.pose
+*.npz
+
+# macOS
+.DS_Store
 
 # Python
 __pycache__/
