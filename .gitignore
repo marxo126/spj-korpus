@@ -8,3 +8,17 @@
 .worktrees/
 .security-key
 logs/security/
+
+# Project data (large binary files)
+data/videos/
+data/pose/
+models/
+*.pose
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+.uv/
