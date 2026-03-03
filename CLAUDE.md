@@ -44,12 +44,9 @@ TypeScript is not used. A web corpus browser (Phase 5, optional) would be the on
 
 ---
 
-## Data Licensing — What You Can and Cannot Do
+## Data Licensing
 
-| Source | ML Training | Notes |
-|---|---|---|
-| Own SPJ videos (~300) + Museum (100h+) | ✅ Yes | Fully owned — primary source |
-
+All training data requires written agreements from data owners before use. Never use any external data source for ML training without an explicit signed agreement.
 
 ---
 
@@ -187,8 +184,7 @@ Python: `from spj.pose import apple_vision_available, extract_pose_apple, extrac
 
 ## Before Corpus Deposit or Publication
 
-Confirm all three:
-2. Written data-sharing agreement signed with **partner-ngo** (same scope)
+Confirm all data-sharing agreements are signed with all partner organizations before any corpus deposit or publication.
 
 ---
 
