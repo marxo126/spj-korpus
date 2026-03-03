@@ -22,25 +22,8 @@ def scan_videos(root_dir: Path) -> list[Path]:
     return sorted(found)
 
 
-def get_video_metadata(path: Path) -> dict:
-    """Run ffprobe and return basic video metadata.
-
-    Returns a dict with keys:
-        path, filename, duration_sec, width, height, fps,
-        file_size_mb, codec
-    Returns placeholder values if ffprobe fails.
-    """
-    path = Path(path)
-    result = {
-        "path": str(path),
-        "filename": path.name,
-        "duration_sec": None,
-        "width": None,
-        "height": None,
-        "fps": None,
-        "file_size_mb": round(path.stat().st_size / 1_048_576, 2),
-        "codec": None,
-    }
+def _probe_with_ffprobe(path: Path) -> dict | None:
+    """Try ffprobe for video metadata. Returns None if ffprobe unavailable."""
     try:
         probe = subprocess.run(
             [
@@ -57,8 +40,7 @@ def get_video_metadata(path: Path) -> dict:
         )
         data = json.loads(probe.stdout)
         fmt = data.get("format", {})
-        result["duration_sec"] = round(float(fmt.get("duration", 0)), 2)
-
+        result = {"duration_sec": round(float(fmt.get("duration", 0)), 2)}
         for stream in data.get("streams", []):
             if stream.get("codec_type") == "video":
                 result["width"] = stream.get("width")
@@ -68,8 +50,66 @@ def get_video_metadata(path: Path) -> dict:
                 num, den = (int(x) for x in fps_raw.split("/"))
                 result["fps"] = round(num / den, 2) if den else None
                 break
+        return result
+    except FileNotFoundError:
+        return None
     except Exception as exc:
-        logger.warning("ffprobe failed for %s: %s", path.name, exc)
+        logger.debug("ffprobe failed for %s: %s", path.name, exc)
+        return None
+
+
+def _probe_with_cv2(path: Path) -> dict | None:
+    """Fallback: use OpenCV to read video metadata."""
+    try:
+        import cv2
+        cap = cv2.VideoCapture(str(path))
+        if not cap.isOpened():
+            return None
+        result = {
+            "width": int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or None,
+            "height": int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or None,
+            "fps": round(cap.get(cv2.CAP_PROP_FPS), 2) or None,
+            "codec": None,
+        }
+        fps = result["fps"]
+        frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
+        if fps and frame_count > 0:
+            result["duration_sec"] = round(frame_count / fps, 2)
+        else:
+            result["duration_sec"] = None
+        # Decode fourcc
+        fourcc_int = int(cap.get(cv2.CAP_PROP_FOURCC))
+        if fourcc_int:
+            result["codec"] = "".join(chr((fourcc_int >> 8 * i) & 0xFF) for i in range(4)).strip()
+        cap.release()
+        return result
+    except Exception as exc:
+        logger.debug("cv2 probe failed for %s: %s", path.name, exc)
+        return None
+
+
+def get_video_metadata(path: Path) -> dict:
+    """Probe video metadata using ffprobe (preferred) or OpenCV (fallback).
+
+    Returns a dict with keys:
+        path, filename, duration_sec, width, height, fps,
+        file_size_mb, codec
+    Returns placeholder values if probing fails.
+    """
+    path = Path(path)
+    result = {
+        "path": str(path),
+        "filename": path.name,
+        "duration_sec": None,
+        "width": None,
+        "height": None,
+        "fps": None,
+        "file_size_mb": round(path.stat().st_size / 1_048_576, 2),
+        "codec": None,
+    }
+    probed = _probe_with_ffprobe(path) or _probe_with_cv2(path)
+    if probed:
+        result.update({k: v for k, v in probed.items() if v is not None})
     return result
 
 

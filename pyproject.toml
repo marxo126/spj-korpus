@@ -24,6 +24,9 @@ dependencies = [
     "scikit-learn>=1.3",
     "requests",
     "mlx-lm>=0.19; sys_platform == 'darwin'",
+    "mcp[cli]>=1.26.0",
+    "anthropic>=0.84.0",
+    "faster-whisper>=1.2.1",
 ]
 
 [build-system]

@@ -274,6 +274,110 @@ if download_clicked and raw_urls:
     )
 
 # ------------------------------------------------------------------ #
+# intl-vocab partner-dictnary download
+# ------------------------------------------------------------------ #
+st.divider()
+st.subheader("📖 intl-vocab partner-dictnary Download")
+st.caption(
+    "Download individual sign videos from intl-vocab.com using their "
+    "partner-dictnary CSV export. Each video = one sign (~2-5s, 320x240)."
+)
+
+STS_CSV = DATA_DIR / "partner-dictnary_export_2026-02-26_10-01-57.csv"
+STS_DIR = VIDEO_DIR / "intl-vocab"
+
+if STS_CSV.exists():
+    from spj.intl-vocab import load_partner-dictnary, download_batch, _sanitize_filename
+
+    sts_df = load_partner-dictnary(STS_CSV)
+
+    # Count already downloaded
+    _downloaded_ids = set()
+    if STS_DIR.exists():
+        for f in STS_DIR.glob("*.mp4"):
+            parts = f.stem.split("_", 1)
+            if parts[0].isdigit():
+                _downloaded_ids.add(int(parts[0]))
+
+    _with_trans = sts_df[sts_df["translation"].notna() & (sts_df["translation"].str.strip() != "")]
+    _remaining = _with_trans[~_with_trans["word_id"].isin(_downloaded_ids)]
+
+    mc1, mc2, mc3 = st.columns(3)
+    mc1.metric("Total in CSV", len(sts_df))
+    mc2.metric("Downloaded", len(_downloaded_ids))
+    mc3.metric("Remaining", len(_remaining))
+
+    # Word class filter
+    wc_options = sorted(_remaining["word_class"].dropna().unique().tolist())
+    selected_wc = st.multiselect(
+        "Word classes to download",
+        options=wc_options,
+        default=[wc for wc in ["Noun", "Verb", "Adjective", "Adverb", "Numeral",
+                                "Pronoun", "Conjunction", "Preposition", "Interjection"]
+                 if wc in wc_options],
+        key="sts_word_classes",
+    )
+
+    if selected_wc:
+        filtered = _remaining[_remaining["word_class"].isin(selected_wc)]
+    else:
+        filtered = _remaining
+
+    st.caption(f"**{len(filtered)}** entries to download after filtering")
+
+    scol1, scol2 = st.columns(2)
+    with scol1:
+        sts_workers = st.slider("Workers", 1, 16, 8, key="sts_workers")
+    with scol2:
+        sts_delay = st.slider("Delay per request (s)", 0.1, 2.0, 0.3, 0.1, key="sts_delay")
+
+    sts_limit = st.number_input(
+        "Max videos to download (0 = all)",
+        min_value=0, value=0, step=500, key="sts_limit",
+    )
+
+    if st.button("📥 Download intl-vocab", type="primary", disabled=len(filtered) == 0):
+        dl_df = filtered.copy()
+        if sts_limit > 0:
+            dl_df = dl_df.head(sts_limit)
+
+        st.markdown(f"Downloading **{len(dl_df)}** videos → `{STS_DIR}`")
+        prog = st.progress(0.0, text="Starting…")
+        log_area = st.empty()
+        _ok = 0
+        _fail = 0
+
+        def _progress(done, total, res):
+            nonlocal _ok, _fail
+            if res["success"]:
+                _ok += 1
+            else:
+                _fail += 1
+            pct = done / total
+            prog.progress(pct, text=f"{done}/{total} — ✅ {_ok} ok, ❌ {_fail} fail")
+
+        results = download_batch(
+            dl_df, STS_DIR,
+            n_workers=sts_workers,
+            yt_dlp_cmd=".venv/bin/yt-dlp",
+            progress_callback=_progress,
+            skip_existing=True,
+            delay=sts_delay,
+        )
+
+        prog.progress(1.0, text="Done!")
+        ok = sum(1 for r in results if r["success"])
+        st.success(f"Downloaded **{ok}** / {len(results)} videos. "
+                   f"Total in folder: ~{len(_downloaded_ids) + ok}")
+
+        st.session_state.pop("inventory", None)
+else:
+    st.info(
+        "No intl-vocab partner-dictnary CSV found. "
+        "Place `partner-dictnary_export_*.csv` in `data/` to enable."
+    )
+
+# ------------------------------------------------------------------ #
 # Files already on disk
 # ------------------------------------------------------------------ #
 st.divider()
