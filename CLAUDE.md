@@ -145,7 +145,8 @@ pre-populated `.eaf` files; annotators review/correct AI tiers in ELAN.
 | 5,000 signs | v2 retrain — begin active learning |
 | 10,000+ signs | v3 full retrain + held-out test set evaluation |
 
-Expected bootstrap accuracy: **~10–15% top-3** (not 20% — that was the old ČZJ estimate).
+**Observed results at 500+ signs:** 31.9% top-3, 24.9% top-1 (with category transfer learning).
+Original estimate was ~10–15% top-3 — exceeded by 2x using internal transfer learning.
 
 ---
 
@@ -261,19 +262,50 @@ MCP tools and orchestrator auto-detect the preset from the checkpoint.
 | `src/spj/preannotate.py` | `load_pose_arrays()`, `detect_sign_segments()`, `preannotate_eaf()` |
 | `src/spj/eaf.py` | `load_eaf()`, `save_eaf()`, `create_empty_eaf()`, `add_ai_annotation()`, tier constants |
 | `src/spj/pose.py` | `extract_pose()`, `extract_pose_batch()`, `ensure_models()`, `apple_vision_available()`, `extract_pose_apple()`, `extract_pose_apple_batch()` |
+| `src/spj/ssl_pretrain.py` | `PretrainConfig`, `PretrainState`, `MaskedPoseModel`, `UnlabeledPoseDataset`, `pretrain_masked_pose()`, `load_pretrained_encoder()`, `list_pretrain_checkpoints()` |
 | `src/spj/glossary.py` | `Glossary`, `load_glossary()`, `save_glossary()`, `normalize_word()`, `tokenize_slovak()` |
 
 ### Model Architecture: PoseTransformerEncoder
 ```
 Input: (batch, max_seq_len, input_dim) # auto-detected: 288 (compact), 444 (extended), 522 (full)
-  → Linear → d_model (256)
+  → Linear → d_model (128)
   → Sinusoidal positional encoding
-  → 4× TransformerEncoderLayer (4 heads, d_ff=512)
+  → 3× TransformerEncoderLayer (4 heads, d_ff=256)
   → Masked mean pooling
   → Linear → n_classes
 ```
-Variable-length sequences padded to `max_seq_len`, attention mask ignores padding.
+500K params. Variable-length sequences padded to `max_seq_len`, attention mask ignores padding.
 Input dim is auto-detected from NPZ files at training time and from checkpoint weights at load time.
+
+### Transfer Learning — Category → Word (Best Approach)
+The category model (`cat_v2_ep55_acc0.4493.pt`, 102 categories, 44.9% val) serves as the encoder initialization for word-level training. Two-phase fine-tuning:
+1. **Phase 1** (10 epochs): Freeze encoder, train classifier only (lr=0.001)
+2. **Phase 2** (90 epochs): Unfreeze all, lr=0.0003 + cosine schedule + patience=25
+
+Weight transfer: 27/29 encoder params transfer exactly (layers 0-1 match; layer 2 random init; classifier replaced). Uses `_load_pretrained_weights()` in `trainer.py`.
+
+**Result:** 24.9% test top-1, 31.9% top-3 — best model so far.
+
+### Self-Supervised Pre-training (SSL) — `src/spj/ssl_pretrain.py`
+Masked Pose Modeling: masks 15% of frames, trains encoder to reconstruct them. No labels needed.
+- `PretrainConfig` — hyperparameters (configurable `input_dim`, default 288)
+- `MaskedPoseModel` — encoder + reconstruction head
+- `UnlabeledPoseDataset` — loads `.pose` files with sliding windows
+- `pretrain_masked_pose()` — background-threadable training loop
+- `load_pretrained_encoder()` / `list_pretrain_checkpoints()` — checkpoint management
+
+**Result:** SSL pre-training on 13,638 NPZ segments yielded only marginal improvement (+6% relative) when fine-tuned on word labels. Supervised category transfer (+48% relative) is far more effective in this data regime.
+
+### Model Checkpoints (current)
+```
+data/models/
+  cat_v2_ep55_acc0.4493.pt          # Category model (102 classes, 44.9% val)
+  quality_ep22_acc0.2297.pt          # Baseline word model (516 classes, 23.0% val)
+  transfer_cat2word_ep37_acc0.2587.pt # ★ BEST: category transfer (516 classes, 24.9% test)
+  ssl_pretrained_compact.pt           # SSL encoder (unsupervised, 50 epochs)
+  ssl_finetune_ep66_acc0.2394.pt     # SSL fine-tuned (516 classes, 17.8% test)
+  quality2_transfer_ep29_acc0.2259.pt # 2+ expanded (1,743 classes, 19.5% test)
+```
 
 ### Checkpoint Format (.pt)
 ```python
@@ -382,6 +414,18 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 ### 12. GPU Utilization — Prefetch Queue Required
 **Mistake:** `_metal_gpu_worker` did synchronous read→cvtColor→process. GPU sat idle ~75% of the time waiting for CPU frame decode.
 **Rule:** Always use a background reader thread with a bounded queue to overlap CPU decode with GPU inference. This raised throughput from ~138 fps to ~195 fps on HD, and ~269 fps to ~403 fps on small videos.
+
+### 13. Supervised Transfer >> Unsupervised SSL for Few-Shot Signs
+**Mistake:** Expected SSL pre-training (masked pose modeling on 13K segments) to outperform supervised category transfer. SSL yielded only +6% relative improvement; category transfer gave +48%.
+**Rule:** When you have a supervised model trained on related labels from the same domain (e.g., grammatical categories for SPJ signs), always try supervised transfer first. Domain-specific supervised features transfer far more effectively than generic temporal dynamics from self-supervised learning, especially with few training samples per class.
+
+### 14. Two-Phase Fine-Tuning for Transfer Learning
+**Mistake:** Could have unfrozen all parameters immediately, which risks destroying transferred features.
+**Rule:** Always use two-phase training when transferring encoder weights: (1) freeze encoder, train only classifier (10 epochs, higher lr), then (2) unfreeze all parameters with lower lr + cosine schedule. This lets the classifier adapt to the new label space before fine-tuning encoder representations.
+
+### 15. Expanding Label Coverage vs. Per-Class Accuracy
+**Mistake:** Assumed including 2-sample labels would improve overall accuracy.
+**Rule:** Adding labels with only 2 samples (from 516→1,743 labels) reduces per-class accuracy (24.9%→19.5% test top-1) but covers 3.4x more signs. This is a deliberate coverage-vs-accuracy tradeoff. For production, use the 3+ model for accurate recognition; for broader coverage, use the 2+ model with lower confidence threshold.
 
 ---
 
