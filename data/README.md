@@ -30,6 +30,6 @@ data/
 
 For research collaboration or data access requests, contact:
 
-**Marek Kanas** — [website: innosign.eu]
+**Marek Kanas** — [InnoSign](https://www.innosign.eu)
 
 Data sharing is subject to partner organization agreements and GDPR compliance.
