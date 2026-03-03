@@ -13,7 +13,7 @@ SPJ-Korpus is an end-to-end AI-assisted pipeline for building a sign language co
 - **Pose extraction** — MediaPipe Holistic (543 landmarks) with Metal GPU acceleration (~400 fps)
 - **AI pre-annotation** — automatic sign boundary detection and gloss suggestion
 - **Active learning loop** — AI suggests → deaf annotators correct in ELAN → corrections retrain the model → better suggestions
-- **Training pipeline** — PoseTransformerEncoder with SignBERT/OpenHands transfer learning
+- **Training pipeline** — PoseTransformerEncoder with category transfer learning (24.9% top-1 on 516 signs)
 - **Evaluation & inference** — model comparison, per-class metrics, prepartner-dictn output to ELAN
 - **MCP server** — 12 pipeline tools for Claude Code integration
 
@@ -88,12 +88,14 @@ Video → MediaPipe Pose → .pose files → EAF Pre-annotation
 
 ```
 Input: (batch, max_seq_len, input_dim)    # 288 (compact) / 444 (extended) / 522 (full)
-  → Linear projection → d_model (256)
+  → Linear projection → d_model (128)
   → Sinusoidal positional encoding
-  → 4x TransformerEncoderLayer (4 heads, d_ff=512)
+  → 3x TransformerEncoderLayer (4 heads, d_ff=256)
   → Masked mean pooling
   → Linear → n_classes
 ```
+
+500K parameters. Compact model chosen over larger alternatives — larger models (2.2M params, d_model=256, 4 layers) consistently overfit on our few-shot data.
 
 ### Landmark Presets
 
@@ -103,13 +105,41 @@ Input: (batch, max_seq_len, input_dim)    # 288 (compact) / 444 (extended) / 522
 | **extended** | 7 | 42 | 99 (+eyes+eyebrows) | 148 | 444 |
 | **full** | 33 | 42 | 99 | 174 | 522 |
 
+### Current Results (March 2026)
+
+Training data: 13,638 NPZ segments from partner-dictnary videos (10K) + category vocabulary (4.7K).
+
+**Word-level sign recognition (516 labels, 3+ samples each):**
+
+| Model | Approach | Test Top-1 | Test Top-3 | Test Top-5 |
+|-------|----------|------------|------------|------------|
+| Baseline | From scratch | 16.8% | 25.4% | 27.6% |
+| **Category Transfer** | **Category encoder → word fine-tune** | **24.9%** | **31.9%** | **35.1%** |
+| SSL Transfer | Masked pose pre-training → fine-tune | 17.8% | 25.4% | 28.6% |
+| Random | 1/516 | 0.2% | 0.6% | 1.0% |
+
+**Key finding:** Supervised category transfer (+48% relative improvement over baseline) dramatically outperforms self-supervised pre-training (+6%) in this data regime. The category model's encoder already understands SPJ-specific motion patterns — this domain knowledge transfers far more effectively than generic temporal dynamics learned from unsupervised masking.
+
+**Category-level classification (102 categories):** 44.9% val accuracy (45x random baseline).
+
+**Expanded dataset (1,743 labels, 2+ samples):** 19.5% test top-1, 28.1% top-3 — covers 3.4x more signs at modest per-class accuracy cost.
+
+### Transfer Learning Strategy
+
+The best-performing approach uses two-phase fine-tuning from the category model:
+
+1. **Phase 1** (epochs 1-10): Freeze encoder, train only the new classifier head (lr=0.001)
+2. **Phase 2** (epochs 11-100): Unfreeze all parameters, lower learning rate (lr=0.0003) with cosine schedule
+
+This transfers 27 of 29 encoder parameters from the category model (2 transformer layers match exactly; the 3rd layer initializes randomly; classifier is replaced entirely).
+
 ### Retraining Milestones
 
-| Signs annotated | Action | Expected accuracy |
+| Signs annotated | Action | Observed/Expected accuracy |
 |----------------|--------|-------------------|
-| 500 | Fine-tune backbone on SPJ bootstrap | ~10-15% top-3 |
-| 2,000 | v1 — first SPJ-specific model | ~50-60% |
-| 5,000 | v2 — active learning begins | ~70-75% |
+| 500 | Fine-tune on SPJ bootstrap data | **25-35% top-3** (observed) |
+| 2,000 | v1 retrain — first SPJ-specific model | ~50-60% |
+| 5,000 | v2 retrain — active learning begins | ~70-75% |
 | 10,000+ | v3 — full evaluation | ~85-90% |
 
 ---
@@ -190,6 +220,13 @@ Other sign languages appear only as transfer learning sources (backbone models).
 ## Status
 
 **Actively developing.** SPJ-Korpus is under active development. The pipeline is functional and processing real data.
+
+Current state (March 2026):
+- **15,000+ videos** ingested from multiple partner sources
+- **13,638 training segments** exported as NPZ with compact landmarks
+- **6 model checkpoints** trained — best achieves 24.9% top-1 on 516 signs (118x random)
+- **Category→word transfer learning** validated as the most effective approach
+- Active learning loop ready for deployment with deaf annotators
 
 If the Slovak Sign Language pipeline succeeds, the toolkit is designed to expand to other sign languages — especially small/minority sign languages in Europe that are similarly underserved by technology. The architecture is language-agnostic; only the training data and annotation conventions are SPJ-specific.
 

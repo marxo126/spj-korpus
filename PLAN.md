@@ -154,24 +154,29 @@ The AI does **not** replace the annotator — it pre-populates an ELAN tier (`AI
 
 ### Accuracy & Milestone Tracking
 
-| Milestone | Training Signs | Expected Accuracy | Est. Annotation Speed |
-|---|---|---|---|
-| Bootstrap | 500 | ~10–15% (transfer from generic ASL/multilingual model or own bootstrap data) | 100h/video |
-| v1 | 2,000 | ~50–60% | 40h/video |
-| v2 | 5,000 | ~70–75% | 20h/video |
-| v3 | 10,000+ | ~85–90% | 10h/video |
+| Milestone | Training Signs | Expected Accuracy | Observed | Est. Annotation Speed |
+|---|---|---|---|---|
+| Bootstrap | 500 | ~10–15% top-3 | **31.9% top-3, 24.9% top-1** (category transfer) | 100h/video |
+| v1 | 2,000 | ~50–60% | — | 40h/video |
+| v2 | 5,000 | ~70–75% | — | 20h/video |
+| v3 | 10,000+ | ~85–90% | — | 10h/video |
 
 *Accuracy = correct gloss in top-3 AI suggestions. Speed estimates assume 60-minute video, 2-person annotation team.*
 
+**Bootstrap results (March 2026):** Using category→word transfer learning (not external backbone), the bootstrap model achieved 2x the original estimate. The category model (102 SPJ grammatical categories, 44.9% val) provides a far more effective encoder than generic multilingual models. See README.md for full results table.
+
 ### Cold-Start Strategy
 
-SPJ has no existing ML training data, and no public Czech Sign Language (ČZJ) pre-trained model exists. The cold start uses:
+SPJ has no existing ML training data, and no public Czech Sign Language (ČZJ) pre-trained model exists.
 
-**Option A (Start immediately):** Use the ~300 owned SPJ videos + museum content as the bootstrap dataset. MediaPipe pose extraction on this material yields thousands of sign instances before Phase 2 recordings begin. A first SPJ-specific model can be trained on this data alone.
+**What worked (March 2026):** Internal category→word transfer learning. Trained a category classifier on 102 SPJ grammatical categories (from category-organized vocabulary, 5,193 videos). Then transferred the encoder weights to initialize the word-level model (516 signs). Result: 24.9% top-1, 31.9% top-3 — 2x the original bootstrap estimate.
 
-**Option B (Transfer from generic model):** Use SignBERT (ICCV 2021, MIT license, public checkpoint) or OpenHands ASL model (Apache 2.0) as backbone. Hand-shape features transfer across sign families. Expected cold-start accuracy: ~10–15% top-3 recall (lower than a ČZJ model would give, but achievable and honestly estimated).
+**What didn't work as well:**
+- Self-supervised pre-training (masked pose modeling on 13K segments): only +6% relative over baseline
+- External backbones (SignBERT, OpenHands): impractical due to architecture mismatches (different landmark count, model format, unmaintained repos)
+- Training on all labels at once (12K+ classes): 0% accuracy — most labels are singletons
 
-**Option C (Generic multilingual backbone):** Use SignCLIP's multilingual embedding space (trained across 44 sign languages) as a frozen feature extractor for the first sign classifier. This leverages universal hand-shape patterns — not any specific language's content. Do NOT incorporate ČZJ or other sign language corpus data into SPJ training sets; the corpus is SPJ-only.
+**Lesson:** Domain-specific supervised features from a related SPJ task (categories) transfer far more effectively than either generic unsupervised learning or external cross-language backbones. Building internal data assets is more valuable than importing external models.
 
 **Do NOT** assume a ready-made ČZJ model exists — it does not.
 
