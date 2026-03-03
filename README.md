@@ -215,6 +215,6 @@ You are free to share and adapt this work for non-commercial purposes, with attr
 ## Author
 
 **Marek Kanas** — deaf developer, Slovakia
-[partner-ngo](https://www.partner-ngo.eu) | [website: partner-ngo.eu]
+[partner-ngo](https://www.partner-ngo.eu)
 
 Built with [Claude Code](https://claude.ai/claude-code) by Anthropic.

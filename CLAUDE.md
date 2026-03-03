@@ -258,7 +258,6 @@ MCP tools and orchestrator auto-detect the preset from the checkpoint.
 | `src/spj/evaluator.py` | `evaluate_model()`, `save_evaluation_report()`, `confusion_matrix_figure()`, `per_class_f1_figure()`, `compare_models_table()` |
 | `src/spj/inference.py` | `predict_segments()`, `write_prepartner-dictns_to_eaf()`, `prepartner-dictns_timeline_figure()` |
 | `src/spj/training_data.py` | `align_pose_to_subtitles()`, `build_alignment_table()`, `import_single_sign_videos()`, `export_segment_npz()`, `export_sign_npz()`, `write_training_config()`, `select_sl_landmarks()`, `SL_LANDMARK_INDICES`, `SL_LANDMARK_PRESETS`, `SL_N_LANDMARKS`, `SL_INPUT_DIM`, `preset_from_input_dim()` |
-| `src/spj/intl-vocab.py` | `load_partner-dictnary()`, `filter_conversational()`, `download_one()`, `download_batch()`, `save_manifest()` |
 | `src/spj/preannotate.py` | `load_pose_arrays()`, `detect_sign_segments()`, `preannotate_eaf()` |
 | `src/spj/eaf.py` | `load_eaf()`, `save_eaf()`, `create_empty_eaf()`, `add_ai_annotation()`, tier constants |
 | `src/spj/pose.py` | `extract_pose()`, `extract_pose_batch()`, `ensure_models()`, `apple_vision_available()`, `extract_pose_apple()`, `extract_pose_apple_batch()` |

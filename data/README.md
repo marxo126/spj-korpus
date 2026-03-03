@@ -30,6 +30,6 @@ data/
 
 For research collaboration or data access requests, contact:
 
-**Marek Kanas** — [website: partner-ngo.eu]
+**Marek Kanas** — [partner-ngo](https://www.partner-ngo.eu)
 
 Data sharing is subject to partner organization agreements and GDPR compliance.
