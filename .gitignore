@@ -41,3 +41,4 @@ dist/
 # Swift build artifacts
 tools/apple-vision-pose/.build/
 tools/apple-vision-pose/.swiftpm/
+src/spj/spreadthesign.py
