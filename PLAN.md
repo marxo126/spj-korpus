@@ -19,27 +19,18 @@
 |---|---|---|---|
 | Own SPJ videos (~300) | Parallel corpus | ✅ Fully owned | SPJ video + Slovak subtitles — primary training source |
 | Museum content (100h+) | Parallel corpus | ✅ Fully owned | Slovak exhibit text ↔ SPJ interpretation — largest owned dataset |
-| [partner organization] | Video + subtitles | ✅ Permission granted | Partner org; many SPJ videos with subtitles — get in writing |
-| partner-ngo.eu | Video + subtitles | ✅ Permission granted | SPJ videos with subtitles — get formal written agreement |
-| [reference partner-dictnary] | Multilingual partner-dictnary | ✅ Via [partner organization] | SVK content produced by [partner organization]; use with [partner organization] written permission (platform ToS does not override creator rights) |
-| [vocabulary reference] | Online partner-dictnary | ⚠️ Proprietary ([vocabulary organization]) | ~9,000 signs; vocabulary reference only — ML training requires [vocabulary organization] agreement |
+| Partner organizations | Video + subtitles | ✅ With agreements | SPJ videos with subtitles — written agreements required |
 | SIGN-HUB (svk) | Linguistic docs | ⚠️ Mixed open/restricted | Grammar, ATLAS, life stories (EU H2020); apply for restricted content |
-| [public SL dataset] | Parallel corpus | ⚠️ Video IDs only (YouTube ToS) | ~4h SPJ; training use requires per-video creator opt-in verification |
 | Trnava University | Research | N/A | First SPJ study program, graduates since 2024 |
 
 ## Data Rights & Licensing
 
-### What Can Be Used for ML Training
+All training data requires written agreements from data owners before use. Own content (videos, museum) is fully owned. Partner data requires formal data-sharing agreements (scope: ML training, derivatives, publication).
+
+### Reference Corpora (public, for transfer learning)
 
 | Source | ML Training | Derivative Dataset | Publish Results |
 |---|---|---|---|
-| Own SPJ videos (~300) | ✅ Yes | ✅ Yes | ✅ Yes |
-| Museum content (100h+) | ✅ Yes | ✅ Yes | ✅ Yes |
-| [partner organization] videos | ✅ Yes (get in writing) | ✅ With agreement | ✅ Yes |
-| partner-ngo.eu videos | ✅ Yes (get in writing) | ✅ With agreement | ✅ Yes |
-| [reference partner-dictnary] | ✅ Via [partner organization] written permission | ✅ With agreement | ✅ Yes |
-| [vocabulary reference] | ❌ Needs [vocabulary organization] agreement | ❌ | ❌ |
-| [public SL dataset] | ⚠️ Per-video creator opt-in required | ❌ | ✅ Results only |
 | PHOENIX14T | ✅ Non-commercial | ✅ Non-commercial | ✅ |
 | How2Sign | ✅ CC BY-NC 4.0 | ✅ CC BY-NC | ✅ |
 | Corpus NGT | ✅ CC BY-NC-SA | ✅ (ShareAlike applies) | ✅ |
@@ -136,11 +127,8 @@ Building an annotated corpus manually is extremely slow (~100 hours per video fo
 
 ```
 Own SPJ videos (~300) + Museum content (100h+)   ← fully owned
-    + [partner organization] videos (with subtitles)       ← permission granted
-    + partner-ngo.eu videos (with subtitles)          ← permission granted
-    + [reference partner-dictnary] (via [partner organization] permission)← permission from creator
+    + Partner organization videos (with subtitles) ← with agreements
     + Phase 2 corpus recordings (new)
-    [+ [vocabulary reference] if [vocabulary organization] agreement signed]
          ↓
     MediaPipe Holistic (pose extraction)
          ↓
@@ -261,12 +249,12 @@ SignWriting is an **optional** annotation tier for human readability and public-
 - [ ] Partner with Trnava University (Roman Vojtechovský) as co-investigator
 - [ ] Study DGS-Korpus annotation conventions (AP03-2018-01) — adapt for SPJ
 - [ ] Set up ELAN with SPJ tier templates
-- [ ] Catalog SPJ vocabulary from [vocabulary reference] (vocabulary reference only); negotiate data-sharing agreement with [vocabulary organization] for ML training use
+- [ ] Catalog SPJ vocabulary from available partner-dictnaries; negotiate data-sharing agreements for ML training use
 - [ ] Set up SignBank instance with SPJ ID-glosses
 
 ### Phase 2 — Data Collection (Months 6–18)
-- [ ] Inventory and assess own corpus assets: ~300 SPJ videos (with Slovak subtitles) + 100+ hours museum SPJ content + [partner organization] videos + partner-ngo.eu videos — assess annotation coverage, extract MediaPipe pose as first training pool
-- [ ] Formalize data-sharing agreements with [partner organization] and partner-ngo in writing (scope: ML training, derivative datasets, publication) — verbal permission already granted but written agreement needed for corpus deposit and publication
+- [ ] Inventory and assess own corpus assets: ~300 SPJ videos (with Slovak subtitles) + 100+ hours museum SPJ content + partner organization videos — assess annotation coverage, extract MediaPipe pose as first training pool
+- [ ] Formalize data-sharing agreements with partner organizations in writing (scope: ML training, derivative datasets, publication)
 - [ ] Record 20–50 native Deaf SPJ signers (geographic spread: Bratislava, Košice, Banská Bystrica)
 - [ ] Recording setup: 2–3 cameras, neutral background, 1080p / 50fps minimum
 - [ ] Task types: free conversation (pairs), Frog Story, picture description, structured vocabulary
@@ -318,7 +306,7 @@ SignWriting is an **optional** annotation tier for human readability and public-
 
 #### Months 10–15 (Setup & Bootstrap)
 - [ ] Extract MediaPipe pose from own 300 SPJ videos + museum content — this is the first training pool, available before Phase 2 recordings begin
-- [ ] Extract MediaPipe Holistic keypoints from [vocabulary reference] videos → `.pose` files (vocabulary reference; ML training contingent on [vocabulary organization] agreement)
+- [ ] Extract MediaPipe Holistic keypoints from available vocabulary videos → `.pose` files
 - [ ] Build batch processing pipeline: video → pose → EAF pre-annotation
 - [ ] Use SignBERT (MIT, public checkpoint) or OpenHands ASL model (Apache 2.0) as transfer learning baseline — no ČZJ model exists
 - [ ] Build and test ELAN AI-tier output format (`AI_Gloss_RH`, `AI_Confidence`)
@@ -358,7 +346,7 @@ SignWriting is an **optional** annotation tier for human readability and public-
 | T2S-GPT (Chen et al.) | ACL 2024 | 2024 | Text → sign autoregressive |
 | SignLLM (Fang et al.) | ICCV 2025 | 2025 | Multilingual SLP, 8 languages |
 | SignAvatars (Yu et al.) | ECCV 2024 | 2024 | 3D holistic motion dataset |
-| [public SL dataset] | arXiv 2024 | 2024 | 25+ SL, 3,207h — includes SPJ (~4h) |
+| [public SL dataset] | arXiv 2024 | 2024 | 25+ SL, 3,207h |
 | OpenHands (Selvaraj et al.) | ACL 2022 | 2022 | Pose-based SLR, low-resource SL |
 | DGS-Korpus AP03-2018-01 | Hamburg 2018 | 2018 | Gold standard annotation conventions |
 | Low-Resource Glossing + Augmentation | ACL 2025 | 2025 | Data augmentation for small corpora |
@@ -384,6 +372,6 @@ SignWriting is an **optional** annotation tier for human readability and public-
 1. Download and install ELAN: https://archive.mpi.nl/tla/elan
 2. Browse DGS-Korpus annotation guidelines: https://www.dgs-korpus.de
 3. Explore sign-language-processing toolkit: https://github.com/sign-language-processing
-4. Catalog available SPJ video: [vocabulary reference] (~9,000 signs), [public SL dataset] SPJ channels
-5. Contact: Trnava University (Roman Vojtechovský) for academic partnership
-6. Run MediaPipe Holistic on [vocabulary reference] videos as first pose extraction test
+4. Catalog available SPJ video sources
+5. Contact: Trnava University for academic partnership
+6. Run MediaPipe Holistic on available SPJ videos as first pose extraction test
