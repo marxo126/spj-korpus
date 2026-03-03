@@ -187,6 +187,12 @@ Other sign languages appear only as transfer learning sources (backbone models).
 
 ---
 
+## Status
+
+**Actively developing.** SPJ-Korpus is under active development. The pipeline is functional and processing real data.
+
+If the Slovak Sign Language pipeline succeeds, the toolkit is designed to expand to other sign languages — especially small/minority sign languages in Europe that are similarly underserved by technology. The architecture is language-agnostic; only the training data and annotation conventions are SPJ-specific.
+
 ## Vision
 
 SPJ-Korpus is phase 1 of a 3-phase project:
@@ -194,6 +200,7 @@ SPJ-Korpus is phase 1 of a 3-phase project:
 1. **SPJ-Korpus** (this project) — build the annotated corpus and sign recognition model
 2. **Training app** — free Slovak Sign Language training tool for the deaf community
 3. **AI interpretation** — when human interpreters are unavailable (~30 for all of Slovakia), AI-powered sign language interpretation and real-time subtitles
+4. **Expand to more languages** — adapt the pipeline for other minority sign languages across Europe
 
 ---
 
