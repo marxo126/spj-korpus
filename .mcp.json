@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "spj-pipeline": {
+      "command": ".venv/bin/python",
+      "args": ["src/spj/mcp_server.py"]
+    }
+  }
+}

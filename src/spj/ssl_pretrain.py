@@ -21,9 +21,6 @@ from torch.utils.data import Dataset, DataLoader
 
 logger = logging.getLogger(__name__)
 
-INPUT_DIM = 1629  # 543 landmarks * 3 coords (X, Y, Z)
-
-
 # ---------------------------------------------------------------------------
 # Config & State
 # ---------------------------------------------------------------------------
@@ -31,6 +28,7 @@ INPUT_DIM = 1629  # 543 landmarks * 3 coords (X, Y, Z)
 @dataclass
 class PretrainConfig:
     """Hyperparameters for self-supervised pretraining."""
+    input_dim: int = 288  # 96 compact landmarks × 3 coords (default)
     mask_ratio: float = 0.15
     lr: float = 1e-4
     epochs: int = 30
@@ -77,6 +75,7 @@ class UnlabeledPoseDataset(Dataset):
 
     def __init__(self, pose_dir: Path, max_seq_len: int = 300, stride: int = 150):
         self.max_seq_len = max_seq_len
+        self.input_dim: int | None = None  # auto-detected from first file
         self.windows: list[tuple[Path, int]] = []  # (pose_file, start_frame)
 
         pose_dir = Path(pose_dir)
@@ -100,8 +99,15 @@ class UnlabeledPoseDataset(Dataset):
             if n_frames < max_seq_len and not self.windows or self.windows[-1][0] != pf:
                 self.windows.append((pf, 0))
 
-        logger.info("UnlabeledPoseDataset: %d windows from %d pose files",
-                     len(self.windows), len(pose_files))
+        # Detect input_dim from the first file
+        if self.windows:
+            first_pose = self._load_window(self.windows[0][0], self.windows[0][1], max_seq_len)
+            self.input_dim = first_pose.shape[1] * first_pose.shape[2] if first_pose.ndim == 3 else first_pose.shape[1]
+        else:
+            self.input_dim = 1629  # fallback: full 543 landmarks * 3
+
+        logger.info("UnlabeledPoseDataset: %d windows from %d pose files, input_dim=%d",
+                     len(self.windows), len(pose_files), self.input_dim)
 
     @staticmethod
     def _count_frames(pose_path: Path) -> int:
@@ -129,8 +135,9 @@ class UnlabeledPoseDataset(Dataset):
         pose = self._load_window(pose_path, start, self.max_seq_len)
         T = pose.shape[0]
 
-        # Flatten to (T, 1629)
+        # Flatten to (T, input_dim)
         features = pose.reshape(T, -1)
+        feat_dim = features.shape[1]
 
         # Pad or truncate
         if T >= self.max_seq_len:
@@ -140,7 +147,7 @@ class UnlabeledPoseDataset(Dataset):
             pad_len = self.max_seq_len - T
             features = np.concatenate([
                 features,
-                np.zeros((pad_len, INPUT_DIM), dtype=np.float32),
+                np.zeros((pad_len, feat_dim), dtype=np.float32),
             ], axis=0)
             mask = np.concatenate([
                 np.ones(T, dtype=np.float32),
@@ -148,7 +155,7 @@ class UnlabeledPoseDataset(Dataset):
             ])
 
         return {
-            "features": torch.from_numpy(features),  # (max_seq_len, 1629)
+            "features": torch.from_numpy(features),  # (max_seq_len, input_dim)
             "mask": torch.from_numpy(mask),           # (max_seq_len,)
         }
 
@@ -167,9 +174,10 @@ class MaskedPoseModel(nn.Module):
     def __init__(self, config: PretrainConfig):
         super().__init__()
         d_model = config.d_model
+        input_dim = config.input_dim
 
         # Encoder (same as PoseTransformerEncoder minus classifier)
-        self.input_proj = nn.Linear(INPUT_DIM, d_model)
+        self.input_proj = nn.Linear(input_dim, d_model)
         self.pos_enc = _SinusoidalPE(d_model, config.max_seq_len)
         self.dropout = nn.Dropout(config.dropout)
 
@@ -185,7 +193,7 @@ class MaskedPoseModel(nn.Module):
         )
 
         # Reconstruction head — predict masked frame features
-        self.recon_head = nn.Linear(d_model, INPUT_DIM)
+        self.recon_head = nn.Linear(d_model, input_dim)
 
     def forward(
         self,
@@ -272,6 +280,12 @@ def pretrain_masked_pose(
             state.finished = True
             state.running = False
             return ""
+
+        # Auto-detect input_dim from data if not explicitly set
+        if dataset.input_dim and dataset.input_dim != config.input_dim:
+            logger.info("Auto-detected input_dim=%d from data (config had %d)",
+                        dataset.input_dim, config.input_dim)
+            config.input_dim = dataset.input_dim
 
         loader = DataLoader(
             dataset,
@@ -397,6 +411,7 @@ def _save_pretrain_checkpoint(
         "encoder_state_dict": encoder_state,
         "full_state_dict": full_state,
         "config": {
+            "input_dim": config.input_dim,
             "d_model": config.d_model,
             "n_heads": config.n_heads,
             "d_ff": config.d_ff,

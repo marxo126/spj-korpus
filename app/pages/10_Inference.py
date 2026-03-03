@@ -135,6 +135,14 @@ with tab_predict:
                     with st.spinner("Loading model…"):
                         model, label_encoder, config, meta = _load_model_cached(str(ckpt_path))
 
+                    # Detect landmark preset from model's input dimension
+                    from spj.training_data import SL_LANDMARK_PRESETS, preset_from_input_dim
+                    _input_dim = model.input_proj.weight.shape[1]
+                    _preset_name = preset_from_input_dim(_input_dim)
+                    _lm_indices = SL_LANDMARK_PRESETS[_preset_name] if _preset_name else None
+                    if _preset_name:
+                        st.caption(f"Landmark preset: **{_preset_name}** ({len(_lm_indices)} landmarks, dim={_input_dim})")
+
                     all_results = []
                     progress = st.progress(0.0, text="Running inference…")
 
@@ -174,6 +182,7 @@ with tab_predict:
                                 model, label_encoder, segments,
                                 data, fps,
                                 max_seq_len=config.max_seq_len,
+                                landmark_indices=_lm_indices,
                             )
 
                             # Ensure EAF exists
@@ -261,7 +270,7 @@ with tab_preview:
                 if not predictions:
                     st.info("No predictions cached for this video.")
                 else:
-                    # Video player
+                    # Video + pose viewer (synced if possible)
                     inv = st.session_state.get("inventory")
                     if inv is not None:
                         match = inv[inv["path"].apply(
@@ -269,7 +278,36 @@ with tab_preview:
                         )]
                         if not match.empty:
                             video_path = Path(str(match.iloc[0]["path"]))
-                            if video_path.exists():
+                            pose_path = POSE_DIR / f"{selected_preview}.pose"
+
+                            if video_path.exists() and pose_path.exists():
+                                try:
+                                    p_data, p_conf, p_fps = _load_pose_cached(
+                                        str(pose_path),
+                                    )
+                                    T = p_data.shape[0]
+
+                                    from spj.training_data import (
+                                        extract_video_segment,
+                                        synced_video_pose_html,
+                                    )
+                                    import streamlit.components.v1 as stc
+
+                                    seg_bytes = extract_video_segment(
+                                        video_path, 0,
+                                        min(int(T / p_fps * 1000), 60_000),
+                                    )
+                                    if seg_bytes is not None:
+                                        html = synced_video_pose_html(
+                                            seg_bytes, p_data, p_conf,
+                                            p_fps, 0, min(T, int(60 * p_fps)),
+                                        )
+                                        stc.html(html, height=500)
+                                    else:
+                                        st.video(str(video_path))
+                                except Exception:
+                                    st.video(str(video_path))
+                            elif video_path.exists():
                                 st.video(str(video_path))
 
                     # Timeline

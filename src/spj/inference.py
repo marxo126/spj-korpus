@@ -23,6 +23,7 @@ def predict_segments(
     fps: float,
     max_seq_len: int = 300,
     device: Optional[torch.device] = None,
+    landmark_indices: Optional[list[int]] = None,
 ) -> list[dict]:
     """Classify each detected sign segment using the trained model.
 
@@ -34,6 +35,8 @@ def predict_segments(
         fps: Video frame rate.
         max_seq_len: Maximum sequence length the model expects.
         device: Torch device (inferred from model if None).
+        landmark_indices: If set, select only these landmarks before inference.
+            Use SL_LANDMARK_INDICES from training_data to match training format.
 
     Returns:
         List of dicts with keys:
@@ -56,9 +59,14 @@ def predict_segments(
 
             # Extract segment pose
             segment_pose = pose_data[frame_start:frame_end, 0, :, :]  # (T_seg, 543, 3)
+
+            # Filter to SL-relevant landmarks if specified
+            if landmark_indices is not None:
+                segment_pose = segment_pose[:, landmark_indices, :]  # (T_seg, N, 3)
+
             T_seg = segment_pose.shape[0]
 
-            # Flatten to (T_seg, 1629)
+            # Flatten to (T_seg, N*3)
             features = segment_pose.reshape(T_seg, -1).astype(np.float32)
 
             # Pad or truncate

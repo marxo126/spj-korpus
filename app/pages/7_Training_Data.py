@@ -2,7 +2,8 @@
 
 Tab 1 (Align):   build alignment table from .pose + .vtt pairs
 Tab 2 (Review):  frame-by-frame visual review with approve / skip / flag
-Tab 3 (Export):  export approved segments as float16 .npz training files
+Tab 3 (Sign-Word): sign-level pairing within approved segments
+Tab 4 (Export):  export approved segments as float16 .npz training files
 """
 import sys
 from pathlib import Path
@@ -11,14 +12,27 @@ import pandas as pd
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
-from spj.glossary import Glossary, load_glossary, save_glossary
+from spj.glossary import Glossary, load_glossary, save_glossary, tokenize_slovak
 from spj.training_data import (
+    PST_AUTO_SUGGESTED,
+    PST_PAIRED,
+    PST_PENDING,
+    PST_SKIPPED,
     build_alignment_table,
+    create_manual_pairing,
+    detect_signs_in_segment,
     export_segment_npz,
+    export_sign_npz,
+    extract_video_segment,
+    import_single_sign_videos,
     load_alignment_csv,
+    load_pairings_csv,
     pose_animation_html,
     pose_frame_figure,
     save_alignment_csv,
+    save_pairings_csv,
+    suggest_sign_pairings,
+    synced_video_pose_html,
     write_training_config,
 )
 
@@ -34,7 +48,9 @@ POSE_DIR      = DATA_DIR / "pose"
 SUBTITLES_DIR = DATA_DIR / "subtitles"
 TRAINING_DIR  = DATA_DIR / "training"
 ALIGNMENT_CSV = TRAINING_DIR / "alignment.csv"
+PAIRINGS_CSV  = TRAINING_DIR / "pairings.csv"
 GLOSSARY_JSON = TRAINING_DIR / "glossary.json"
+MODELS_DIR    = DATA_DIR / "models"
 
 
 # ---------------------------------------------------------------------------
@@ -46,6 +62,26 @@ def _fmt_ms(ms: int) -> str:
     s   = (ms % 60_000) // 1_000
     rem = ms % 1_000
     return f"{m:02d}:{s:02d}.{rem:03d}"
+
+
+def _video_aspect(video_path: str) -> float:
+    """Return height/width ratio from inventory, or 0 if unknown."""
+    inv = st.session_state.get("inventory")
+    if inv is None:
+        return 0
+    match = inv[inv["path"] == video_path]
+    if match.empty:
+        name = Path(video_path).name
+        match = inv[inv["filename"] == name] if "filename" in inv.columns else match
+    if match.empty:
+        return 0
+    row = match.iloc[0]
+    w_val = row.get("width")
+    h_val = row.get("height")
+    if pd.isna(w_val) or pd.isna(h_val):
+        return 0
+    w, h = int(w_val), int(h_val)
+    return h / w if w > 0 else 0
 
 
 _CLR_MAPPED  = ("#2d5a2d", "#a8e6a8")
@@ -68,11 +104,63 @@ def _get_glossary() -> Glossary:
     return st.session_state["glossary"]
 
 
+def _get_pairings_df() -> pd.DataFrame:
+    if "td_pairings_df" in st.session_state:
+        return st.session_state["td_pairings_df"]
+    if PAIRINGS_CSV.exists():
+        pdf = load_pairings_csv(PAIRINGS_CSV)
+        st.session_state["td_pairings_df"] = pdf
+        return pdf
+    return pd.DataFrame()
+
+
+def _save_pairings(pairings_df: pd.DataFrame) -> None:
+    """Save pairings to CSV + session state."""
+    save_pairings_csv(pairings_df, PAIRINGS_CSV)
+    st.session_state["td_pairings_df"] = pairings_df
+
+
+def _render_glossary_html(word_matches: list[dict]) -> str:
+    """Build color-coded HTML spans for glossary-matched words."""
+    parts = []
+    for wm in word_matches:
+        if wm["mapped"]:
+            tip = ", ".join(wm["glosses"])
+            parts.append(_word_span(wm["raw"], *_CLR_MAPPED, tip))
+        else:
+            parts.append(_word_span(wm["raw"], *_CLR_UNKNOWN))
+    return " ".join(parts)
+
+
+# Pairing status icons (module-level constant, not rebuilt per iteration)
+_PAIRING_ICONS = {
+    PST_PENDING: "🟡",
+    PST_PAIRED: "🟢",
+    PST_SKIPPED: "⚪",
+    PST_AUTO_SUGGESTED: "🤖",
+}
+
+
 @st.cache_resource
 def _load_pose_cached(pose_path_str: str):
     """Load pose arrays once per video path, shared across all reruns."""
     from spj.preannotate import load_pose_arrays
     return load_pose_arrays(Path(pose_path_str))
+
+
+@st.cache_data(max_entries=5, ttl=600)
+def _extract_segment_cached(
+    video_path_str: str, start_ms: int, end_ms: int,
+) -> bytes | None:
+    """Extract video segment via ffmpeg, cached (max 5 clips, 10 min TTL)."""
+    return extract_video_segment(Path(video_path_str), start_ms, end_ms)
+
+
+@st.cache_resource
+def _load_model_cached(ckpt_path: str):
+    """Load model checkpoint once, shared across reruns."""
+    from spj.trainer import load_checkpoint
+    return load_checkpoint(Path(ckpt_path))
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +169,7 @@ def _load_pose_cached(pose_path_str: str):
 
 st.header("🎓 Training Data")
 st.caption(
-    "Align .pose files with .vtt subtitles → visually review segments → "
+    "Align .pose files with subtitles or import glossed clips → review → "
     "export approved segments as float16 .npz files for SignBERT / OpenHands."
 )
 st.caption("Page 7/10 · Align pose + subtitles, review each segment, export .npz training files.")
@@ -89,15 +177,14 @@ with st.expander("ℹ️ How to use this page", expanded=False):
     st.markdown("""
 **Needs:**
 - Pose files (page 2 — Pose Extraction)
-- Subtitle `.vtt` files (page 6 — Subtitles)
-
-Both must exist for the same video.
+- Subtitle `.vtt` files (page 6) **OR** glossed single-sign video clips (e.g. SpreadTheSign)
 
 **Steps:**
 
 **Tab 📐 Align**
-1. Click **📐 Align all pairs** — matches each subtitle timestamp to the pose frame range.
-   Creates one row per subtitle cue in `data/training/alignment.csv`.
+1. **Subtitle-based:** Click **📐 Align all pairs** — matches subtitle timestamps to pose frames.
+2. **Glossed clips:** Click **📥 Import glossed videos** — imports single-sign clips where
+   each file = one sign (label parsed from filename, no subtitles needed).
 
 **Tab 👁 Review** *(do after Align)*
 2. Filter by *Pending* to see unreviewed segments.
@@ -133,7 +220,9 @@ df = _get_alignment_df()
 # Tabs
 # ---------------------------------------------------------------------------
 
-tab_align, tab_review, tab_export = st.tabs(["📐 Align", "👁 Review", "📦 Export"])
+tab_align, tab_review, tab_signword, tab_export = st.tabs(
+    ["📐 Align", "👁 Review", "✂ Sign-Word", "📦 Export"]
+)
 
 # ══════════════════════════════════════════════════════════════════════════
 # TAB 1 — ALIGN
@@ -265,6 +354,98 @@ with tab_align:
 
                     st.success(f"Alignment saved to `{ALIGNMENT_CSV}`")
 
+    # ------------------------------------------------------------------
+    # Import glossed single-sign videos (SpreadTheSign, etc.)
+    # ------------------------------------------------------------------
+    st.divider()
+    st.subheader("Import glossed videos (no subtitles needed)")
+    st.caption(
+        "Single-sign video clips where each file = one sign. "
+        "Label is parsed from the filename: `{word_id}_{translation}.mp4`."
+    )
+
+    # Find subdirectories in data/videos/ that have matching .pose files
+    VIDEO_DIR = DATA_DIR / "videos"
+    _gloss_dirs: list[str] = []
+    if VIDEO_DIR.exists():
+        for d in sorted(VIDEO_DIR.iterdir()):
+            if d.is_dir():
+                vids = list(d.glob("*.mp4")) + list(d.glob("*.webm"))
+                if vids:
+                    _gloss_dirs.append(d.name)
+
+    if _gloss_dirs:
+        sel_dir = st.selectbox(
+            "Video folder",
+            options=_gloss_dirs,
+            help="Subfolder inside data/videos/ containing glossed clips.",
+            key="td_gloss_import_dir",
+        )
+        gloss_video_dir = VIDEO_DIR / sel_dir
+
+        # Count how many have poses
+        _g_vids = sorted(
+            f for ext in ("*.mp4", "*.mkv", "*.webm", "*.mov")
+            for f in gloss_video_dir.glob(ext)
+        )
+        _g_with_pose = [
+            v for v in _g_vids
+            if (POSE_DIR / f"{v.stem}.pose").exists()
+            and (POSE_DIR / f"{v.stem}.pose").stat().st_size > 0
+        ]
+        st.caption(
+            f"**{len(_g_vids)}** video(s) in `{sel_dir}/`, "
+            f"**{len(_g_with_pose)}** with pose extracted"
+        )
+
+        icol1, icol2 = st.columns(2)
+        with icol1:
+            import_status = st.radio(
+                "Import status",
+                [ST_APPROVED, ST_PENDING],
+                horizontal=True,
+                help="'approved' auto-approves clean single-sign clips. "
+                     "'pending' lets you review each one first.",
+                key="td_gloss_import_status",
+            )
+        with icol2:
+            split_words = st.checkbox(
+                "Split multi-word labels",
+                value=True,
+                help="When a label has multiple words (e.g. 'baranie mäso'), "
+                     "also create one segment per word (full phrase + each word). "
+                     "Word segments are set to 'pending' for manual review.",
+                key="td_gloss_split_words",
+            )
+
+        if st.button(
+            f"📥 Import {len(_g_with_pose)} glossed videos",
+            type="primary",
+            disabled=len(_g_with_pose) == 0,
+        ):
+            with st.spinner("Importing glossed videos…"):
+                existing = st.session_state.get("td_align_df")
+                new_df, n_imported = import_single_sign_videos(
+                    pose_dir=POSE_DIR,
+                    video_dir=gloss_video_dir,
+                    existing_df=existing,
+                    status=import_status,
+                    split_words=split_words,
+                )
+
+            if n_imported == 0:
+                st.warning("No new videos to import (all already in alignment table).")
+            else:
+                save_alignment_csv(new_df, ALIGNMENT_CSV)
+                st.session_state["td_align_df"] = new_df
+                df = new_df
+                st.success(
+                    f"Imported **{n_imported}** glossed video(s) as '{import_status}'. "
+                    f"Total segments: **{len(new_df)}**."
+                )
+    else:
+        st.info("No video subfolders found in `data/videos/`.")
+
     # Summary of current alignment (shown even without inventory)
     if df is not None and not df.empty:
         st.divider()
@@ -394,16 +575,27 @@ with tab_review:
                     icon = _icons.get(str(r["status"]), "⚫")
                     return f"{icon} {ts} | {text}"
 
-                # Validate / initialise current segment selection
-                cur_id = st.session_state.get("td_current_seg_id")
-                if cur_id not in seg_ids:
-                    cur_id = seg_ids[0]
-                    st.session_state["td_current_seg_id"] = cur_id
+                # Resolve pending navigation (buttons set _td_nav_target
+                # instead of writing directly to the widget-bound key).
+                _nav = st.session_state.pop("_td_nav_target", None)
+                if _nav is not None and _nav in seg_ids:
+                    # Programmatic navigation: set widget key directly
+                    st.session_state["td_current_seg_id"] = _nav
+
+                # Resolve index for initial render (key not yet in state)
+                _seg_index = 0
+                if (
+                    "td_current_seg_id" in st.session_state
+                    and st.session_state["td_current_seg_id"] in seg_ids
+                ):
+                    _seg_index = seg_ids.index(
+                        st.session_state["td_current_seg_id"]
+                    )
 
                 cur_id = st.selectbox(
                     "Segment",
                     seg_ids,
-                    index=seg_ids.index(cur_id),
+                    index=_seg_index,
                     format_func=_seg_label_short,
                     key="td_current_seg_id",
                 )
@@ -413,15 +605,14 @@ with tab_review:
                 cur_pos = seg_ids.index(cur_id)
 
                 # ── Reviewed timestamps (from session state) ─────────
-                rs_key = f"rs_{cur_id}"
-                re_key = f"re_{cur_id}"
-                if rs_key not in st.session_state:
-                    st.session_state[rs_key] = int(cur_row["reviewed_start_ms"])
-                if re_key not in st.session_state:
-                    st.session_state[re_key] = int(cur_row["reviewed_end_ms"])
+                trim_key = f"trim_{cur_id}"
+                if trim_key not in st.session_state:
+                    st.session_state[trim_key] = (
+                        int(cur_row["reviewed_start_ms"]),
+                        int(cur_row["reviewed_end_ms"]),
+                    )
 
-                rev_start = int(st.session_state[rs_key])
-                rev_end   = int(st.session_state[re_key])
+                rev_start, rev_end = st.session_state[trim_key]
 
                 # ── Load pose + compute frame range ───────────────────
                 r_n_frames    = 0
@@ -497,22 +688,11 @@ with tab_review:
                 ):
                     # Color-coded sentence
                     if word_matches:
-                        html_parts = []
-                        for wm in word_matches:
-                            if wm["mapped"]:
-                                tip = ", ".join(wm["glosses"])
-                                html_parts.append(
-                                    _word_span(wm["raw"], *_CLR_MAPPED, tip)
-                                )
-                            else:
-                                html_parts.append(
-                                    _word_span(wm["raw"], *_CLR_UNKNOWN)
-                                )
                         bg_m, fg_m = _CLR_MAPPED
                         bg_u, fg_u = _CLR_UNKNOWN
                         st.markdown(
                             '<div style="line-height:2.2;margin-bottom:8px;">'
-                            + " ".join(html_parts) + "</div>"
+                            + _render_glossary_html(word_matches) + "</div>"
                             + f'<small><span style="background:{bg_m};'
                             f'color:{fg_m};padding:1px 6px;border-radius:3px;">'
                             f'mapped</span> '
@@ -664,43 +844,79 @@ with tab_review:
                             st.caption("No glosses yet." if not g_search
                                        else "No matches.")
 
-                # ── Two-column: Video | Pose animation ────────────────
-                col_vid, col_pose = st.columns(2)
+                # ── Synced Video + Pose viewer ─────────────────────────
+                import streamlit.components.v1 as stc
 
-                with col_vid:
-                    video_path = Path(str(cur_row["video_path"]))
-                    if video_path.exists():
-                        st.video(
-                            str(video_path),
-                            start_time=max(0, rev_start // 1000),
+                video_path = Path(str(cur_row["video_path"]))
+                _synced = False
+                aspect = _video_aspect(str(video_path))
+
+                if video_path.exists() and pose_loaded and r_n_frames > 0:
+                    # Try synced viewer (ffmpeg extracts segment → base64)
+                    seg_bytes = _extract_segment_cached(
+                        str(video_path), rev_start, rev_end,
+                    )
+                    if seg_bytes is not None:
+                        html = synced_video_pose_html(
+                            seg_bytes, p_data, p_conf, p_fps,
+                            r_frame_start, r_frame_end,
                         )
+                        iframe_h = (
+                            max(500, int(350 * aspect) + 80)
+                            if aspect > 0 else 500
+                        )
+                        stc.html(html, height=iframe_h)
+                        _synced = True
                     else:
                         st.warning(
-                            f"Video not found: `{video_path.name}`"
+                            "ffmpeg unavailable — video and pose "
+                            "play independently (not synced)."
                         )
 
-                with col_pose:
-                    if pose_loaded and r_n_frames > 0:
-                        import streamlit.components.v1 as stc
-                        anim_html = pose_animation_html(
-                            p_data, p_conf, p_fps,
-                            r_frame_start, r_frame_end, rev_start,
-                        )
-                        stc.html(anim_html, height=600)
-                    elif pose_loaded:
-                        st.info("No frames in this segment.")
+                if not _synced:
+                    # Fallback: two-column independent playback
+                    col_vid, col_pose = st.columns(2)
+                    with col_vid:
+                        if video_path.exists():
+                            st.video(
+                                str(video_path),
+                                start_time=max(0, rev_start // 1000),
+                            )
+                        else:
+                            st.warning(
+                                f"Video not found: `{video_path.name}`"
+                            )
+                    with col_pose:
+                        if pose_loaded and r_n_frames > 0:
+                            anim_html = pose_animation_html(
+                                p_data, p_conf, p_fps,
+                                r_frame_start, r_frame_end, rev_start,
+                                video_aspect=aspect,
+                            )
+                            stc.html(anim_html, height=600)
+                        elif pose_loaded:
+                            st.info("No frames in this segment.")
 
                 # ── Edit controls ─────────────────────────────────────
-                ec1, ec2, ec3 = st.columns([4, 2, 2])
+                ec1, ec2 = st.columns([3, 5])
                 with ec1:
                     st.text_area("Edit text", key=tx_key, height=68)
                 with ec2:
-                    rev_start = st.number_input(
-                        "Start (ms)", step=100, key=rs_key,
+                    seg_start = int(cur_row["start_ms"])
+                    seg_end = int(cur_row["end_ms"])
+                    trim_range = st.slider(
+                        "Trim segment",
+                        min_value=max(0, seg_start - 2000),
+                        max_value=seg_end + 2000,
+                        value=(rev_start, rev_end),
+                        step=50,
+                        format="%dms",
+                        key=trim_key,
                     )
-                with ec3:
-                    rev_end = st.number_input(
-                        "End (ms)", step=100, key=re_key,
+                    rev_start, rev_end = trim_range
+                    st.caption(
+                        f"{_fmt_ms(rev_start)} → {_fmt_ms(rev_end)}"
+                        f"  ({rev_end - rev_start}ms)"
                     )
                 reviewed_text = st.session_state[tx_key]
 
@@ -758,7 +974,7 @@ with tab_review:
                             & (df["status"] == ST_PENDING)
                         ]
                         if not pending_in_video.empty:
-                            st.session_state["td_current_seg_id"] = (
+                            st.session_state["_td_nav_target"] = (
                                 pending_in_video.iloc[0]["segment_id"]
                             )
 
@@ -814,18 +1030,484 @@ with tab_review:
                     save_alignment_csv(df, ALIGNMENT_CSV)
                     st.rerun()
                 if prev_btn:
-                    st.session_state["td_current_seg_id"] = (
+                    st.session_state["_td_nav_target"] = (
                         seg_ids[cur_pos - 1]
                     )
                     st.rerun()
                 if next_btn:
-                    st.session_state["td_current_seg_id"] = (
+                    st.session_state["_td_nav_target"] = (
                         seg_ids[cur_pos + 1]
                     )
                     st.rerun()
 
 # ══════════════════════════════════════════════════════════════════════════
-# TAB 3 — EXPORT
+# TAB 3 — SIGN-WORD PAIRING
+# ══════════════════════════════════════════════════════════════════════════
+with tab_signword:
+    df = st.session_state.get("td_align_df")
+
+    if df is None or df.empty:
+        st.info("No alignment data yet. Run alignment in the **Align** tab first.")
+    else:
+        approved_df = df[df["status"] == ST_APPROVED]
+        if approved_df.empty:
+            st.info(
+                "No approved segments yet. "
+                "Approve segments in the **Review** tab first."
+            )
+        else:
+            pairings_df = _get_pairings_df()
+
+            # ── Video selector (same pattern as Review) ───────────
+            approved_df = approved_df.copy()
+            approved_df["_vstem"] = approved_df["video_path"].apply(
+                lambda p: Path(p).stem
+            )
+            sw_video_stems = sorted(approved_df["_vstem"].unique())
+
+            if not sw_video_stems:
+                st.info("No approved segments available.")
+            else:
+                sw_cur_video = st.selectbox(
+                    "Video",
+                    sw_video_stems,
+                    key="sw_current_video",
+                )
+
+                # Filter segments for this video
+                sw_video_df = approved_df[
+                    approved_df["_vstem"] == sw_cur_video
+                ]
+                sw_seg_ids = sw_video_df["segment_id"].tolist()
+                sw_id_to_row = {
+                    row["segment_id"]: row
+                    for _, row in sw_video_df.iterrows()
+                }
+
+                # Pre-compute paired counts (O(N) once, not O(N*M) per selectbox)
+                _paired_counts: dict[str, int] = {}
+                if not pairings_df.empty:
+                    _pm = pairings_df["status"].isin([PST_PAIRED, PST_AUTO_SUGGESTED])
+                    _paired_counts = pairings_df[_pm].groupby("segment_id").size().to_dict()
+
+                # Segment selector
+                def _sw_seg_label(sid):
+                    r = sw_id_to_row[sid]
+                    ts = (
+                        f"{_fmt_ms(int(r['start_ms']))}"
+                        f"→{_fmt_ms(int(r['end_ms']))}"
+                    )
+                    text = str(r.get("reviewed_text", "") or r.get("text", ""))[:50]
+                    n_paired = _paired_counts.get(sid, 0)
+                    return f"{ts} | {text} ({n_paired} paired)"
+
+                sw_cur_seg = st.selectbox(
+                    "Segment (approved only)",
+                    sw_seg_ids,
+                    format_func=_sw_seg_label,
+                    key="sw_current_seg_id",
+                )
+
+                sw_row = sw_id_to_row[sw_cur_seg]
+                subtitle_text = (
+                    str(sw_row.get("reviewed_text", "")).strip()
+                    or str(sw_row.get("text", ""))
+                )
+
+                # ── Subtitle text display ─────────────────────────
+                glossary = _get_glossary()
+                word_matches = glossary.match_sentence(subtitle_text)
+
+                # Color-coded sentence
+                st.markdown(
+                    '<div style="text-align:center;line-height:2.2;'
+                    'padding:8px 12px;background:rgba(255,255,255,0.05);'
+                    'border-radius:8px;margin:4px 0;">'
+                    + _render_glossary_html(word_matches) + "</div>",
+                    unsafe_allow_html=True,
+                )
+
+                # ── Load pose data ────────────────────────────────
+                sw_pose_loaded = False
+                try:
+                    sw_p_data, sw_p_conf, sw_fps = _load_pose_cached(
+                        str(sw_row["pose_path"])
+                    )
+                    sw_pose_loaded = True
+                except Exception as exc:
+                    st.error(f"Pose load error: {exc}")
+
+                # ── Filter pairings to current segment ────────────
+                seg_pairings = pd.DataFrame()
+                if not pairings_df.empty:
+                    seg_pairings = pairings_df[
+                        pairings_df["segment_id"] == sw_cur_seg
+                    ].copy()
+
+                # ── Stats row ─────────────────────────────────────
+                n_detected = len(seg_pairings)
+                n_paired_seg = int(
+                    seg_pairings["status"].isin(
+                        [PST_PAIRED, PST_AUTO_SUGGESTED]
+                    ).sum()
+                ) if n_detected else 0
+                n_suggested = int(
+                    (seg_pairings["status"] == PST_AUTO_SUGGESTED).sum()
+                ) if n_detected else 0
+
+                sc1, sc2, sc3 = st.columns(3)
+                sc1.metric("Signs detected", n_detected)
+                sc2.metric("Paired", n_paired_seg)
+                sc3.metric("Auto-suggested", n_suggested)
+
+                # ── Global progress bar (retrain thresholds) ──────
+                total_paired = 0
+                if not pairings_df.empty:
+                    total_paired = int(
+                        pairings_df["status"].isin(
+                            [PST_PAIRED, PST_AUTO_SUGGESTED]
+                        ).sum()
+                    )
+
+                # Retrain thresholds from CLAUDE.md
+                thresholds = [
+                    (500, "Fine-tune backbone"),
+                    (2000, "v1 retrain"),
+                    (5000, "v2 active learning"),
+                    (10000, "v3 full retrain"),
+                ]
+                next_thresh = 500
+                next_label = "Fine-tune backbone"
+                for t, lbl in thresholds:
+                    if total_paired < t:
+                        next_thresh = t
+                        next_label = lbl
+                        break
+                else:
+                    next_thresh = thresholds[-1][0]
+                    next_label = thresholds[-1][1]
+
+                st.progress(
+                    min(1.0, total_paired / next_thresh),
+                    text=f"{total_paired}/{next_thresh} paired signs → {next_label}",
+                )
+
+                # ── Action buttons ────────────────────────────────
+                btn_c1, btn_c2 = st.columns(2)
+                detect_btn = btn_c1.button(
+                    "Detect Signs",
+                    type="primary",
+                    disabled=not sw_pose_loaded,
+                    key="sw_detect_btn",
+                )
+
+                # Find latest checkpoint for suggestions
+                _ckpt_path = None
+                if MODELS_DIR.exists():
+                    ckpts = sorted(MODELS_DIR.glob("*.pt"))
+                    if ckpts:
+                        _ckpt_path = ckpts[-1]
+
+                suggest_btn = btn_c2.button(
+                    "Auto-Suggest",
+                    disabled=(
+                        not sw_pose_loaded
+                        or seg_pairings.empty
+                        or _ckpt_path is None
+                    ),
+                    key="sw_suggest_btn",
+                    help=(
+                        "No trained model found"
+                        if _ckpt_path is None
+                        else f"Using {_ckpt_path.name}"
+                    ),
+                )
+
+                # ── Manual sign add ───────────────────────────────
+                seg_start_ms = int(sw_row["reviewed_start_ms"])
+                seg_end_ms = int(sw_row["reviewed_end_ms"])
+
+                with st.expander("+ Add sign manually"):
+                    mc1, mc2 = st.columns([1, 3])
+                    with mc1:
+                        manual_hand = st.selectbox(
+                            "Hand",
+                            ["right", "left"],
+                            format_func=lambda h: "RH" if h == "right" else "LH",
+                            key="sw_manual_hand",
+                        )
+                    with mc2:
+                        manual_range = st.slider(
+                            "Time range",
+                            min_value=max(0, seg_start_ms - 500),
+                            max_value=seg_end_ms + 500,
+                            value=(seg_start_ms, seg_end_ms),
+                            step=10,
+                            format="%dms",
+                            key="sw_manual_range",
+                        )
+                    if st.button("Add Sign", key="sw_add_manual", type="secondary"):
+                        if sw_pose_loaded:
+                            new_p = create_manual_pairing(
+                                segment_id=sw_cur_seg,
+                                video_path=str(sw_row["video_path"]),
+                                pose_path=str(sw_row["pose_path"]),
+                                hand=manual_hand,
+                                sign_start_ms=manual_range[0],
+                                sign_end_ms=manual_range[1],
+                                fps=sw_fps,
+                            )
+                            new_pdf = pd.DataFrame([new_p])
+                            pairings_df = pd.concat(
+                                [pairings_df, new_pdf], ignore_index=True,
+                            )
+                            _save_pairings(pairings_df)
+                            st.rerun()
+                        else:
+                            st.error("Pose data not loaded — cannot add sign.")
+
+                # ── Detect handler ────────────────────────────────
+                if detect_btn and sw_pose_loaded:
+                    new_pairings = detect_signs_in_segment(
+                        sw_p_data, sw_p_conf, sw_fps,
+                        int(sw_row["reviewed_start_ms"]),
+                        int(sw_row["reviewed_end_ms"]),
+                        sw_cur_seg,
+                        str(sw_row["video_path"]),
+                        str(sw_row["pose_path"]),
+                    )
+                    if new_pairings:
+                        new_pdf = pd.DataFrame(new_pairings)
+                        # Remove existing pairings for this segment
+                        if not pairings_df.empty:
+                            pairings_df = pairings_df[
+                                pairings_df["segment_id"] != sw_cur_seg
+                            ]
+                        pairings_df = pd.concat(
+                            [pairings_df, new_pdf], ignore_index=True,
+                        )
+                        _save_pairings(pairings_df)
+                        st.rerun()
+                    else:
+                        st.warning("No sign boundaries detected in this segment.")
+
+                # ── Suggest handler ───────────────────────────────
+                if suggest_btn and sw_pose_loaded and _ckpt_path and not seg_pairings.empty:
+                    with st.spinner("Running model inference..."):
+                        model, label_enc, ckpt_cfg = _load_model_cached(
+                            str(_ckpt_path)
+                        )
+                        pairings_df = suggest_sign_pairings(
+                            pairings_df,
+                            sw_p_data, sw_fps,
+                            model, label_enc, ckpt_cfg,
+                            glossary,
+                            subtitle_text,
+                        )
+                        _save_pairings(pairings_df)
+                    st.rerun()
+
+                # ── Display each detected sign ────────────────────
+                if seg_pairings.empty and not detect_btn:
+                    st.info(
+                        "No signs detected for this segment yet. "
+                        "Click **Detect Signs** to find sign boundaries."
+                    )
+                elif not seg_pairings.empty:
+                    # Track which sign is expanded for pose viewer
+                    sw_selected_sign = st.session_state.get("sw_selected_sign")
+
+                    # Hoist invariants out of per-sign loop
+                    import streamlit.components.v1 as stc
+                    sw_video_path = Path(str(sw_row["video_path"]))
+                    sw_word_options = tokenize_slovak(subtitle_text)
+
+                    for pidx, (_, p_row) in enumerate(seg_pairings.iterrows()):
+                        pid = p_row["pairing_id"]
+                        hand_label = "RH" if p_row["hand"] == "right" else "LH"
+                        status = str(p_row["status"])
+                        icon = _PAIRING_ICONS.get(status, "⚫")
+
+                        header = (
+                            f"{icon} Sign {pidx + 1}: "
+                            f"{_fmt_ms(int(p_row['sign_start_ms']))}"
+                            f"→{_fmt_ms(int(p_row['sign_end_ms']))} "
+                            f"({hand_label}) — {status}"
+                        )
+
+                        with st.expander(header, expanded=(pid == sw_selected_sign)):
+                            # Show suggestion if present
+                            if p_row.get("suggestion_gloss") and str(p_row["suggestion_gloss"]).strip():
+                                sug_conf = float(p_row.get("suggestion_confidence", 0))
+                                st.caption(
+                                    f"Suggested: **{p_row['suggestion_gloss']}** "
+                                    f"({sug_conf:.0%})"
+                                )
+
+                            # Mini pose viewer for this sign
+                            if sw_pose_loaded:
+                                sign_f_start = int(p_row["sign_frame_start"])
+                                sign_f_end = int(p_row["sign_frame_end"])
+                                sign_n_frames = sign_f_end - sign_f_start
+
+                                if sign_n_frames > 0 and sw_video_path.exists():
+                                    seg_bytes = _extract_segment_cached(
+                                        str(sw_video_path),
+                                        int(p_row["sign_start_ms"]),
+                                        int(p_row["sign_end_ms"]),
+                                    )
+                                    if seg_bytes is not None:
+                                        html = synced_video_pose_html(
+                                            seg_bytes,
+                                            sw_p_data, sw_p_conf, sw_fps,
+                                            sign_f_start, sign_f_end,
+                                        )
+                                        stc.html(html, height=350)
+                                    else:
+                                        anim_html = pose_animation_html(
+                                            sw_p_data, sw_p_conf, sw_fps,
+                                            sign_f_start, sign_f_end,
+                                            int(p_row["sign_start_ms"]),
+                                            video_aspect=_video_aspect(
+                                                str(sw_video_path)),
+                                        )
+                                        stc.html(anim_html, height=350)
+
+                            # ── Time adjustment ────────────────────
+                            sign_trim = st.slider(
+                                "Sign timing",
+                                min_value=max(0, seg_start_ms - 500),
+                                max_value=seg_end_ms + 500,
+                                value=(int(p_row["sign_start_ms"]),
+                                       int(p_row["sign_end_ms"])),
+                                step=10,
+                                format="%dms",
+                                key=f"sw_trim_{pid}",
+                            )
+                            st.caption(
+                                f"{_fmt_ms(sign_trim[0])} → {_fmt_ms(sign_trim[1])}"
+                            )
+
+                            # ── Word pairing controls ─────────────
+                            # Pre-select current words if paired
+                            cur_word_str = str(p_row.get("word", ""))
+                            current_words: list[str] = [
+                                w for w in cur_word_str.split()
+                                if w and w in sw_word_options
+                            ]
+
+                            wc1, wc2 = st.columns([3, 2])
+                            with wc1:
+                                sel_words = st.multiselect(
+                                    "Words",
+                                    sw_word_options,
+                                    default=current_words,
+                                    key=f"sw_words_{pid}",
+                                )
+                            with wc2:
+                                # Gloss lookup uses first word; multi-word
+                                # signs get a compound gloss via auto-create
+                                word_glosses: list[str] = []
+                                if sel_words:
+                                    word_glosses = glossary.lookup(sel_words[0])
+                                    if word_glosses:
+                                        st.caption(
+                                            "Gloss: "
+                                            + ", ".join(word_glosses)
+                                        )
+                                    elif len(sel_words) > 1:
+                                        st.caption("New compound gloss")
+                                    else:
+                                        st.caption("Unknown word")
+
+                            # ── Note field ──────────────────────────
+                            note = st.text_input(
+                                "Note",
+                                value=str(p_row.get("note", "") or ""),
+                                key=f"sw_note_{pid}",
+                                placeholder="e.g. 2 words → 1 sign",
+                            )
+
+                            # Action buttons
+                            ac1, ac2, ac3 = st.columns(3)
+
+                            pair_disabled = (
+                                len(sel_words) == 0
+                                or status == PST_PAIRED
+                            )
+                            confirm_label = "Confirm" if status == PST_AUTO_SUGGESTED else "Pair"
+                            pair_btn = ac1.button(
+                                confirm_label,
+                                key=f"sw_pair_{pid}",
+                                type="primary",
+                                disabled=pair_disabled,
+                            )
+                            skip_btn = ac2.button(
+                                "Skip",
+                                key=f"sw_skip_{pid}",
+                                disabled=(status == PST_SKIPPED),
+                            )
+                            unpair_btn = ac3.button(
+                                "Unpair",
+                                key=f"sw_unpair_{pid}",
+                                disabled=(
+                                    status not in (PST_PAIRED, PST_AUTO_SUGGESTED)
+                                ),
+                            )
+
+                            # ── Pair handler ──────────────────────
+                            if pair_btn and sel_words:
+                                joined_word = " ".join(sel_words)
+
+                                # Gloss lookup on first word
+                                if word_glosses:
+                                    gloss_id = word_glosses[0]
+                                else:
+                                    # Unknown word — auto-create gloss
+                                    from spj.glossary import normalize_word
+                                    nw = normalize_word(sel_words[0])
+                                    gloss_id = glossary.suggest_next_id(
+                                        nw.upper()
+                                    )
+                                    glossary.add_gloss(gloss_id, nw)
+                                    save_glossary(glossary, GLOSSARY_JSON)
+
+                                # Recompute frame indices from adjusted time
+                                adj_frame_start = int(sign_trim[0] * sw_fps / 1000)
+                                adj_frame_end = int(sign_trim[1] * sw_fps / 1000)
+
+                                # Update the pairing
+                                mask = pairings_df["pairing_id"] == pid
+                                pairings_df.loc[mask, "word"] = joined_word
+                                pairings_df.loc[mask, "gloss_id"] = gloss_id
+                                pairings_df.loc[mask, "status"] = PST_PAIRED
+                                pairings_df.loc[mask, "sign_start_ms"] = sign_trim[0]
+                                pairings_df.loc[mask, "sign_end_ms"] = sign_trim[1]
+                                pairings_df.loc[mask, "sign_frame_start"] = adj_frame_start
+                                pairings_df.loc[mask, "sign_frame_end"] = adj_frame_end
+                                pairings_df.loc[mask, "note"] = note
+                                _save_pairings(pairings_df)
+                                st.session_state["sw_selected_sign"] = pid
+                                st.rerun()
+
+                            # ── Skip handler ──────────────────────
+                            if skip_btn:
+                                mask = pairings_df["pairing_id"] == pid
+                                pairings_df.loc[mask, "status"] = PST_SKIPPED
+                                _save_pairings(pairings_df)
+                                st.rerun()
+
+                            # ── Unpair handler ────────────────────
+                            if unpair_btn:
+                                mask = pairings_df["pairing_id"] == pid
+                                pairings_df.loc[mask, "word"] = ""
+                                pairings_df.loc[mask, "gloss_id"] = ""
+                                pairings_df.loc[mask, "status"] = PST_PENDING
+                                _save_pairings(pairings_df)
+                                st.rerun()
+
+# ══════════════════════════════════════════════════════════════════════════
+# TAB 4 — EXPORT
 # ══════════════════════════════════════════════════════════════════════════
 with tab_export:
     df = st.session_state.get("td_align_df")
@@ -848,6 +1530,15 @@ with tab_export:
                 "Review segments in the **Review** tab first."
             )
         else:
+            export_mode = st.radio(
+                "Export granularity",
+                [
+                    "Sentence-level (subtitle segments)",
+                    "Sign-level (word pairings)",
+                ],
+                key="td_export_mode",
+            )
+
             out_dir_str = st.text_input(
                 "Output directory",
                 value=str(TRAINING_DIR / "export"),
@@ -855,66 +1546,169 @@ with tab_export:
             )
             out_dir = Path(out_dir_str)
 
-            col_e1, col_e2 = st.columns(2)
+            if export_mode == "Sentence-level (subtitle segments)":
+                # ── Sentence-level export (original) ──────────────
+                col_e1, col_e2 = st.columns(2)
 
-            with col_e1:
-                if st.button("📦 Export approved segments", type="primary"):
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    bar    = st.progress(0.0, text="Exporting …")
-                    errors: list[str] = []
-                    paths:  list[str] = []
+                with col_e1:
+                    if st.button("Export approved segments", type="primary"):
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        bar    = st.progress(0.0, text="Exporting …")
+                        errors: list[str] = []
+                        paths:  list[str] = []
 
-                    for i, (_, row) in enumerate(approved_df.iterrows(), 1):
-                        bar.progress(
-                            i / len(approved_df),
-                            text=f"{i} / {len(approved_df)}",
+                        for i, (_, row) in enumerate(approved_df.iterrows(), 1):
+                            bar.progress(
+                                i / len(approved_df),
+                                text=f"{i} / {len(approved_df)}",
+                            )
+                            try:
+                                p = export_segment_npz(row, out_dir)
+                                if p is not None:
+                                    paths.append(p)
+                                else:
+                                    errors.append(
+                                        f"`{row.get('segment_id', '?')}`: "
+                                        "skipped (0-frame segment)"
+                                    )
+                            except Exception as exc:
+                                errors.append(f"`{row.get('segment_id', '?')}`: {exc}")
+
+                        bar.progress(1.0, text="Done")
+
+                        if errors:
+                            with st.expander(f"Export errors ({len(errors)})"):
+                                for e in errors:
+                                    st.markdown(e)
+
+                        total_mb = sum(
+                            Path(p).stat().st_size
+                            for p in paths
+                            if Path(p).exists()
+                        ) / 1_048_576
+
+                        cfg_path = write_training_config(out_dir, len(paths))
+                        st.success(
+                            f"Exported **{len(paths)}** .npz files — {total_mb:.1f} MB\n\n"
+                            f"Training config: `{cfg_path.name}`\n\n"
+                            f"Output: `{out_dir}`"
                         )
-                        try:
-                            p = export_segment_npz(row, out_dir)
-                            if p is not None:
-                                paths.append(p)
-                            else:
-                                errors.append(
-                                    f"`{row.get('segment_id', '?')}`: "
-                                    "skipped (0-frame segment)"
+
+                with col_e2:
+                    if st.button("Export CSV manifest"):
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        manifest = approved_df[[
+                            "segment_id", "video_path",
+                            "start_ms", "end_ms",
+                            "reviewed_start_ms", "reviewed_end_ms",
+                            "text", "reviewed_text",
+                            "fps", "n_frames",
+                        ]].copy()
+                        manifest["label"] = manifest["reviewed_text"].where(
+                            manifest["reviewed_text"].str.strip() != "",
+                            manifest["text"],
+                        )
+                        manifest_path = out_dir / "manifest.csv"
+                        manifest.to_csv(manifest_path, index=False)
+                        st.success(f"Manifest saved: `{manifest_path}`")
+
+            else:
+                # ── Sign-level export ─────────────────────────────
+                exp_pairings = _get_pairings_df()
+
+                if exp_pairings.empty:
+                    st.info(
+                        "No pairings yet. Use the **Sign-Word** tab to "
+                        "detect and pair signs first."
+                    )
+                else:
+                    paired_p = exp_pairings[
+                        exp_pairings["status"].isin([PST_PAIRED, PST_AUTO_SUGGESTED])
+                    ]
+                    ep1, ep2 = st.columns(2)
+                    ep1.metric("Paired signs", len(paired_p))
+                    ep2.metric(
+                        "Unique glosses",
+                        int(paired_p["gloss_id"].nunique()) if not paired_p.empty else 0,
+                    )
+
+                    if paired_p.empty:
+                        st.info("No paired signs to export.")
+                    else:
+                        col_se1, col_se2 = st.columns(2)
+
+                        with col_se1:
+                            if st.button("Export paired signs", type="primary"):
+                                out_dir.mkdir(parents=True, exist_ok=True)
+                                bar = st.progress(0.0, text="Exporting signs …")
+                                errors: list[str] = []
+                                paths: list[str] = []
+
+                                # Group by pose_path for efficient loading
+                                for pose_path, group in paired_p.groupby("pose_path"):
+                                    try:
+                                        p_data, p_conf, _ = _load_pose_cached(str(pose_path))
+                                    except Exception as exc:
+                                        for _, r in group.iterrows():
+                                            errors.append(
+                                                f"`{r.get('pairing_id', '?')}`: pose load error: {exc}"
+                                            )
+                                        continue
+
+                                    for _, row in group.iterrows():
+                                        try:
+                                            p = export_sign_npz(
+                                                row, p_data, p_conf, out_dir,
+                                            )
+                                            if p is not None:
+                                                paths.append(p)
+                                            else:
+                                                errors.append(
+                                                    f"`{row.get('pairing_id', '?')}`: "
+                                                    "skipped (0 frames)"
+                                                )
+                                        except Exception as exc:
+                                            errors.append(
+                                                f"`{row.get('pairing_id', '?')}`: {exc}"
+                                            )
+
+                                    bar.progress(
+                                        min(1.0, len(paths) / max(1, len(paired_p))),
+                                        text=f"{len(paths)} / {len(paired_p)}",
+                                    )
+
+                                bar.progress(1.0, text="Done")
+
+                                if errors:
+                                    with st.expander(f"Export errors ({len(errors)})"):
+                                        for e in errors:
+                                            st.markdown(e)
+
+                                total_mb = sum(
+                                    Path(p).stat().st_size
+                                    for p in paths
+                                    if Path(p).exists()
+                                ) / 1_048_576
+
+                                cfg_path = write_training_config(out_dir, len(paths))
+                                st.success(
+                                    f"Exported **{len(paths)}** sign .npz files — "
+                                    f"{total_mb:.1f} MB\n\n"
+                                    f"Training config: `{cfg_path.name}`\n\n"
+                                    f"Output: `{out_dir}`"
                                 )
-                        except Exception as exc:
-                            errors.append(f"`{row.get('segment_id', '?')}`: {exc}")
 
-                    bar.progress(1.0, text="Done")
-
-                    if errors:
-                        with st.expander(f"Export errors ({len(errors)})"):
-                            for e in errors:
-                                st.markdown(e)
-
-                    total_mb = sum(
-                        Path(p).stat().st_size
-                        for p in paths
-                        if Path(p).exists()
-                    ) / 1_048_576
-
-                    cfg_path = write_training_config(out_dir, len(paths))
-                    st.success(
-                        f"Exported **{len(paths)}** .npz files — {total_mb:.1f} MB\n\n"
-                        f"Training config: `{cfg_path.name}`\n\n"
-                        f"Output: `{out_dir}`"
-                    )
-
-            with col_e2:
-                if st.button("📄 Export CSV manifest"):
-                    out_dir.mkdir(parents=True, exist_ok=True)
-                    manifest = approved_df[[
-                        "segment_id", "video_path",
-                        "start_ms", "end_ms",
-                        "reviewed_start_ms", "reviewed_end_ms",
-                        "text", "reviewed_text",
-                        "fps", "n_frames",
-                    ]].copy()
-                    manifest["label"] = manifest["reviewed_text"].where(
-                        manifest["reviewed_text"].str.strip() != "",
-                        manifest["text"],
-                    )
-                    manifest_path = out_dir / "manifest.csv"
-                    manifest.to_csv(manifest_path, index=False)
-                    st.success(f"Manifest saved: `{manifest_path}`")
+                        with col_se2:
+                            if st.button("Export sign manifest"):
+                                out_dir.mkdir(parents=True, exist_ok=True)
+                                manifest = paired_p[[
+                                    "pairing_id", "segment_id",
+                                    "video_path", "pose_path", "hand",
+                                    "sign_start_ms", "sign_end_ms",
+                                    "sign_frame_start", "sign_frame_end",
+                                    "word", "gloss_id", "fps",
+                                ]].copy()
+                                manifest["label"] = manifest["gloss_id"]
+                                manifest_path = out_dir / "manifest.csv"
+                                manifest.to_csv(manifest_path, index=False)
+                                st.success(f"Manifest saved: `{manifest_path}`")

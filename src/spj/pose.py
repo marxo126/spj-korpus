@@ -32,6 +32,10 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Recycle GPU detectors every N frames to flush Metal memory leak
+# (GitHub: mediapipe #5652, #6223). ~1s overhead per recycle.
+_GPU_RECYCLE_INTERVAL = 2000
+
 # ---------------------------------------------------------------------------
 # Model download URLs (Google MediaPipe model garden)
 # ---------------------------------------------------------------------------
@@ -136,10 +140,37 @@ def _compute_queue_size(frame_w: int, frame_h: int, n_workers: int) -> int:
 # Public API
 # ---------------------------------------------------------------------------
 
-def pose_exists(video_path: Path, pose_dir: Path) -> bool:
-    """Return True if a .pose output already exists for this video."""
-    stem = Path(video_path).stem
-    return (Path(pose_dir) / f"{stem}.pose").exists()
+def _make_progress_writer(
+    progress_file_str: str, throttle: int = 10,
+) -> Callable[[float], None]:
+    """Return a progress callback that writes a fraction to a temp file.
+
+    Writes only every `throttle` calls to reduce disk I/O (default: every 10th).
+    Always writes when frac >= 1.0 (completion).
+    """
+    _count = [0]  # mutable counter (closure-safe)
+
+    def _write(frac: float):
+        if not progress_file_str:
+            return
+        _count[0] += 1
+        if frac < 1.0 and _count[0] % throttle != 0:
+            return
+        try:
+            Path(progress_file_str).write_text(str(round(frac, 4)))
+        except Exception:
+            pass
+    return _write
+
+
+def _recycle_detectors(
+    pose_det, hand_det, face_det, model_paths: dict[str, Path],
+):
+    """Close and recreate GPU detectors to flush Metal memory leak."""
+    pose_det.close()
+    hand_det.close()
+    face_det.close()
+    return _build_detectors(model_paths, use_gpu=True)
 
 
 def extract_pose(
@@ -183,7 +214,7 @@ def extract_pose(
     frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
 
-    total_frames = _probe_frame_count(video_path, fps)
+    _, total_frames = _probe_video_info(video_path, fps)
     queue_size = _compute_queue_size(frame_w, frame_h, n_concurrent)
 
     # GPU safe only when one pipeline at a time — concurrent Metal CVPixelBuffer
@@ -213,6 +244,7 @@ def extract_pose(
 
     pose_frames: list[np.ndarray] = []
     processed = 0
+    frames_since_recycle = 0
 
     try:
         while True:
@@ -223,9 +255,15 @@ def extract_pose(
             lm = _process_frame(rgba, timestamp_ms, pose_det, hand_det, face_det)
             pose_frames.append(lm)
             processed += 1
+            frames_since_recycle += 1
 
             if progress_callback is not None and total_frames > 0:
                 progress_callback(min(processed / total_frames, 0.99))
+
+            if use_gpu and frames_since_recycle >= _GPU_RECYCLE_INTERVAL:
+                pose_det, hand_det, face_det, device = _recycle_detectors(
+                    pose_det, hand_det, face_det, model_paths)
+                frames_since_recycle = 0
     finally:
         reader_thread.join(timeout=5)
         cap.release()
@@ -251,14 +289,7 @@ def extract_pose(
 
 
 def _batch_worker(args: tuple) -> dict:
-    """Top-level picklable worker for ProcessPoolExecutor.
-
-    Uses CPU (XNNPACK) — the only officially supported path for macOS.
-    MediaPipe documents GPU support for Ubuntu only; macOS GPU has known
-    unbounded memory leaks (issues #5652, #6223) across all running modes.
-
-    Each process is independent (spawn start method on macOS), so N workers
-    fully utilise N × XNNPACK threads across the M-series CPU cores.
+    """Top-level picklable worker for ProcessPoolExecutor (CPU path).
 
     Args (packed as tuple for pickling):
         video_path_str, output_path_str, model_dir_str, progress_file_str
@@ -269,21 +300,115 @@ def _batch_worker(args: tuple) -> dict:
     output_path = Path(output_path_str)
     model_dir = Path(model_dir_str) if model_dir_str else None
 
-    def _write_progress(frac: float):
-        if progress_file_str:
-            try:
-                Path(progress_file_str).write_text(str(round(frac, 4)))
-            except Exception:
-                pass
-
     return extract_pose(
         video_path,
         output_path,
-        progress_callback=_write_progress,
+        progress_callback=_make_progress_writer(progress_file_str),
         model_dir=model_dir,
         n_concurrent=1,
-        use_gpu=False,   # CPU/XNNPACK — stable, no memory leaks, officially supported
+        use_gpu=False,   # CPU/XNNPACK — stable for multi-process
     )
+
+
+def _metal_gpu_worker(args: tuple) -> dict:
+    """Thread worker for Metal GPU batch extraction.
+
+    Each thread creates its own MediaPipe detectors with Metal GPU delegate.
+    Threads share the process Metal context — no CVPixelBuffer pool conflicts
+    (-6662) that occur with separate processes.
+
+    Uses a prefetch reader thread so frame decode (CPU) overlaps with GPU
+    inference — without this, GPU sits idle ~75% of the time waiting for
+    cv2.read()/cvtColor().
+    """
+    import cv2
+
+    video_path_str, output_path_str, model_dir_str, progress_file_str = args
+    video_path = Path(video_path_str)
+    output_path = Path(output_path_str)
+    model_dir = Path(model_dir_str) if model_dir_str else None
+    model_paths = ensure_models(model_dir)
+    _write_progress = _make_progress_writer(progress_file_str)
+
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        return {"error": f"Cannot open video: {video_path}", "path": str(video_path)}
+
+    fps = cap.get(cv2.CAP_PROP_FPS) or 25.0
+    frame_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)) or 1920
+    frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
+    _, total_frames = _probe_video_info(video_path, fps)
+
+    try:
+        pose_det, hand_det, face_det, device = _build_detectors(model_paths, use_gpu=True)
+    except Exception as exc:
+        cap.release()
+        return {"error": f"Metal GPU init failed: {exc}", "path": str(video_path)}
+
+    # Prefetch queue: reader thread decodes frames while GPU processes.
+    # Keep queue SMALL (2-3 frames) — each frame becomes a Metal CVPixelBuffer
+    # when processed. Large queues waste memory for no gain since GPU inference
+    # is the bottleneck.
+    q_size = 3
+    frame_q: queue.Queue = queue.Queue(maxsize=q_size)
+
+    def _reader():
+        ridx = 0
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
+                frame_q.put((rgba, int(ridx * 1000 / fps)))
+                ridx += 1
+        finally:
+            frame_q.put(None)
+
+    reader_t = threading.Thread(target=_reader, daemon=True)
+    reader_t.start()
+
+    frames: list[np.ndarray] = []
+    idx = 0
+    frames_since_recycle = 0
+    try:
+        while True:
+            item = frame_q.get()
+            if item is None:
+                break
+            rgba, timestamp_ms = item
+            lm = _process_frame(rgba, timestamp_ms, pose_det, hand_det, face_det)
+            frames.append(lm)
+            idx += 1
+            frames_since_recycle += 1
+            if total_frames > 0:
+                _write_progress(min(idx / total_frames, 0.99))
+
+            if frames_since_recycle >= _GPU_RECYCLE_INTERVAL:
+                pose_det, hand_det, face_det, device = _recycle_detectors(
+                    pose_det, hand_det, face_det, model_paths)
+                frames_since_recycle = 0
+    finally:
+        reader_t.join(timeout=5)
+        cap.release()
+        pose_det.close()
+        hand_det.close()
+        face_det.close()
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    _save_pose(frames, fps, output_path)
+    _write_progress(1.0)
+
+    duration_sec = len(frames) / fps if fps > 0 else 0.0
+    output_size = output_path.stat().st_size if output_path.exists() else 0
+
+    return {
+        "frames": len(frames),
+        "duration_sec": round(duration_sec, 2),
+        "output_size_bytes": output_size,
+        "device": device,
+        "path": str(video_path),
+    }
 
 
 def extract_pose_batch(
@@ -292,11 +417,17 @@ def extract_pose_batch(
     progress_dir: Path | None = None,
     model_dir: Path | None = None,
     n_workers: int | None = None,
+    use_gpu: bool = False,
 ) -> list[dict]:
-    """Process multiple videos in parallel using separate OS processes.
+    """Process multiple videos in parallel.
 
-    Each worker process has its own Metal GPU context and CVPixelBuffer pool,
-    so all 40 GPU cores can be used concurrently without -6662 pool conflicts.
+    Two modes:
+      - use_gpu=False (default): ProcessPoolExecutor with CPU/XNNPACK.
+        Each process is independent. Stable, no memory leaks.
+      - use_gpu=True: ThreadPoolExecutor with Metal GPU delegate.
+        Threads share one Metal context — uses all 40 GPU cores on Apple Silicon.
+        ~60% faster than Apple Vision ANE on M4 Max.
+        Known concern: MediaPipe Metal has memory leaks on macOS (issues #5652, #6223).
 
     Per-video progress is written to .progress temp files in progress_dir
     (float 0.0–1.0) so the caller can poll them for live UI updates.
@@ -306,7 +437,8 @@ def extract_pose_batch(
         output_dir: Directory to write .pose files.
         progress_dir: Optional directory for per-video .progress temp files.
         model_dir: Override model directory.
-        n_workers: Parallel workers. Auto-scaled to RAM if None.
+        n_workers: Parallel workers. Auto-scaled if None.
+        use_gpu: Use Metal GPU via ThreadPoolExecutor (default: False = CPU).
 
     Returns:
         List of result dicts in completion order.
@@ -318,13 +450,10 @@ def extract_pose_batch(
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    if n_workers is None:
-        n_workers = recommend_workers(len(video_paths))
-
     # Pre-download models in the main process before spawning workers
     ensure_models(model_dir)
 
-    # Build args tuples (must be picklable — no lambdas, no closures)
+    # Build args tuples (shared across backends)
     args_list = []
     for vpath in video_paths:
         vpath = Path(vpath)
@@ -334,9 +463,21 @@ def extract_pose_batch(
         args_list.append((str(vpath), str(out),
                           str(model_dir) if model_dir else "", pfile))
 
+    # Select worker function and executor type based on backend
+    if use_gpu:
+        if n_workers is None:
+            n_workers = min(8, len(video_paths))  # 8 threads optimal on M4 Max
+        worker_fn = _metal_gpu_worker
+        ExecutorCls = ThreadPoolExecutor
+    else:
+        if n_workers is None:
+            n_workers = recommend_workers(len(video_paths))
+        worker_fn = _batch_worker
+        ExecutorCls = ProcessPoolExecutor
+
     results: list[dict] = []
-    with ProcessPoolExecutor(max_workers=n_workers) as pool:
-        futures = {pool.submit(_batch_worker, args): Path(args[0])
+    with ExecutorCls(max_workers=n_workers) as pool:
+        futures = {pool.submit(worker_fn, args): Path(args[0])
                    for args in args_list}
         for future in as_completed(futures):
             vpath = futures[future]
@@ -345,7 +486,6 @@ def extract_pose_batch(
             except Exception as exc:
                 logger.error(f"Failed {vpath.name}: {exc}")
                 results.append({"error": str(exc), "path": str(vpath)})
-
     return results
 
 
@@ -353,28 +493,40 @@ def extract_pose_batch(
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _probe_frame_count(video_path: Path, fps: float) -> int:
-    """Accurate frame count via ffprobe duration × fps.
+def _probe_video_info(video_path: Path, cv2_fps: float = 25.0) -> tuple[float, int]:
+    """Return (fps, frame_count) from a single ffprobe call.
 
     cv2.CAP_PROP_FRAME_COUNT is unreliable for MKV/WebM from yt-dlp.
+    Falls back to cv2 if ffprobe fails.
     """
     try:
         probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format",
-             str(video_path)],
+            ["ffprobe", "-v", "quiet", "-print_format", "json",
+             "-show_streams", "-show_format", str(video_path)],
             capture_output=True, text=True, timeout=15,
         )
         data = json.loads(probe.stdout)
+        # Extract FPS from video stream
+        fps = cv2_fps
+        for stream in data.get("streams", []):
+            if stream.get("codec_type") == "video":
+                r_fps = stream.get("r_frame_rate", "")
+                if "/" in r_fps:
+                    num, den = r_fps.split("/")
+                    if float(den) > 0:
+                        fps = float(num) / float(den)
+                break
+        # Frame count from duration × fps
         duration = float(data.get("format", {}).get("duration", 0))
         if duration > 0:
-            return max(1, int(duration * fps))
+            return fps, max(1, int(duration * fps))
     except Exception:
         pass
     import cv2
     cap = cv2.VideoCapture(str(video_path))
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
-    return max(n, 1)
+    return cv2_fps, max(n, 1)
 
 
 def _build_detectors(model_paths: dict[str, Path], use_gpu: bool = True):
@@ -469,7 +621,11 @@ def _process_frame(
     if hand_result.hand_landmarks:
         for idx, landmarks in enumerate(hand_result.hand_landmarks):
             handedness = hand_result.handedness[idx][0].category_name
-            arr = np.array([[lm.x, lm.y, lm.z, 1.0] for lm in landmarks], dtype=np.float32)
+            arr = np.array([
+                [lm.x, lm.y, lm.z,
+                 lm.visibility if lm.visibility is not None and lm.visibility > 0 else 1.0]
+                for lm in landmarks
+            ], dtype=np.float32)
             if handedness == "Left":
                 left_hand = arr
             else:
@@ -480,7 +636,8 @@ def _process_frame(
         for i, lm in enumerate(face_result.face_landmarks[0]):
             if i >= 468:
                 break
-            face[i] = [lm.x, lm.y, lm.z, 1.0]
+            face[i] = [lm.x, lm.y, lm.z,
+                       lm.visibility if lm.visibility is not None and lm.visibility > 0 else 1.0]
 
     return np.concatenate([body, left_hand, right_hand, face], axis=0)
 
@@ -526,3 +683,215 @@ def _save_pose(frames: list[np.ndarray], fps: float, output_path: Path) -> None:
         npz_path = output_path.with_suffix(".npz")
         np.savez_compressed(str(npz_path), pose=arr, fps=np.array(fps))
         output_path.touch()
+
+
+# ---------------------------------------------------------------------------
+# Apple Vision backend (Swift CLI, ANE+GPU on Apple Silicon)
+# ---------------------------------------------------------------------------
+
+_APPLE_VISION_BINARY = Path(__file__).parent.parent.parent / "tools" / "apple-vision-pose" / ".build" / "release" / "apple-vision-pose"
+
+
+def apple_vision_available() -> bool:
+    """Return True if the Apple Vision Swift CLI binary exists and is executable."""
+    return _APPLE_VISION_BINARY.exists() and _APPLE_VISION_BINARY.is_file()
+
+
+def _parse_jsonl(jsonl_path: Path, video_fps: float) -> list[np.ndarray]:
+    """Parse JSONL output from Apple Vision CLI into list of (543, 4) frames.
+
+    Each JSONL line has: {"frame": int, "timestamp": float, "landmarks": [[x,y,conf], ...]}
+    Converts to (543, 4) format: x, y, z=0, confidence.
+    """
+    frames: list[np.ndarray] = []
+    with open(jsonl_path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            landmarks = obj.get("landmarks", [])
+            frame = np.zeros((543, 4), dtype=np.float32)
+            for i, lm in enumerate(landmarks[:543]):
+                if len(lm) >= 3:
+                    frame[i] = [lm[0], lm[1], 0.0, lm[2]]  # x, y, z=0, confidence
+            frames.append(frame)
+    return frames
+
+
+def extract_pose_apple(
+    video_path: Path,
+    output_path: Path,
+    progress_callback: Optional[Callable[[float], None]] = None,
+    target_fps: int = 0,
+    concurrent_frames: int = 1,
+) -> dict:
+    """Extract pose landmarks using Apple Vision (ANE+GPU).
+
+    Calls the Swift CLI tool, reads its JSONL output, converts to .pose format
+    via _save_pose().
+
+    Args:
+        video_path: Input video file.
+        output_path: Destination .pose file.
+        progress_callback: Called with float in [0, 1] as frames are processed.
+        target_fps: Target FPS for sampling (0 = every frame).
+        concurrent_frames: Concurrent frame workers within the Swift CLI
+            (1 = sequential, >1 = GCD concurrent Vision inference).
+
+    Returns:
+        Dict: frames, duration_sec, output_size_bytes, device.
+    """
+    import tempfile
+
+    video_path = Path(video_path)
+    output_path = Path(output_path)
+
+    if not video_path.exists():
+        raise FileNotFoundError(f"Video not found: {video_path}")
+    if not apple_vision_available():
+        raise RuntimeError(
+            f"Apple Vision binary not found at {_APPLE_VISION_BINARY}. "
+            "Build with: cd tools/apple-vision-pose && swift build -c release"
+        )
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # Run Swift CLI → JSONL temp file
+    with tempfile.NamedTemporaryFile(suffix=".jsonl", delete=False) as tmp:
+        jsonl_path = Path(tmp.name)
+
+    try:
+        cmd = [
+            str(_APPLE_VISION_BINARY), "extract",
+            "--input", str(video_path),
+            "--output", str(jsonl_path),
+        ]
+        if target_fps > 0:
+            cmd.extend(["--fps", str(target_fps)])
+        if concurrent_frames > 1:
+            cmd.extend(["--concurrent", str(concurrent_frames)])
+
+        # Run with progress monitoring via stderr
+        proc = subprocess.Popen(
+            cmd, stderr=subprocess.PIPE, stdout=subprocess.DEVNULL, text=True,
+        )
+
+        # Parse stderr progress lines
+        total_frames = 0
+        for line in proc.stderr:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                msg = json.loads(line)
+                if "total" in msg and "frame" in msg:
+                    total_frames = msg["total"]
+                    if progress_callback and total_frames > 0:
+                        progress_callback(min(msg["frame"] / total_frames, 0.99))
+            except json.JSONDecodeError:
+                pass
+
+        proc.wait()
+        if proc.returncode != 0:
+            raise RuntimeError(f"Apple Vision CLI exited with code {proc.returncode}")
+
+        # Parse JSONL and get video FPS
+        video_fps, _ = _probe_video_info(video_path)
+        frames = _parse_jsonl(jsonl_path, video_fps)
+
+        if not frames:
+            raise RuntimeError("Apple Vision produced 0 frames")
+
+        # Save as .pose format
+        _save_pose(frames, video_fps, output_path)
+
+        if progress_callback:
+            progress_callback(1.0)
+
+        duration_sec = len(frames) / video_fps if video_fps > 0 else 0.0
+        output_size = output_path.stat().st_size if output_path.exists() else 0
+
+        return {
+            "frames": len(frames),
+            "duration_sec": round(duration_sec, 2),
+            "output_size_bytes": output_size,
+            "device": "Apple Vision (ANE+GPU)",
+            "path": str(video_path),
+        }
+    finally:
+        jsonl_path.unlink(missing_ok=True)
+
+
+def _apple_batch_worker(args: tuple) -> dict:
+    """Worker for Apple Vision batch extraction via ThreadPoolExecutor."""
+    video_path_str, output_path_str, target_fps, progress_file_str, concurrent_frames = args
+    video_path = Path(video_path_str)
+    output_path = Path(output_path_str)
+
+    return extract_pose_apple(
+        video_path, output_path,
+        progress_callback=_make_progress_writer(progress_file_str),
+        target_fps=target_fps,
+        concurrent_frames=concurrent_frames,
+    )
+
+
+def extract_pose_apple_batch(
+    video_paths: list[Path],
+    output_dir: Path,
+    progress_dir: Path | None = None,
+    target_fps: int = 0,
+    n_workers: int | None = None,
+    concurrent_frames: int = 4,
+) -> list[dict]:
+    """Process multiple videos in parallel using Apple Vision.
+
+    Uses ThreadPoolExecutor (not Process) — Apple Vision runs on ANE/GPU
+    per-process, no Metal context conflicts with threads.
+
+    Args:
+        video_paths: Videos to process.
+        output_dir: Directory to write .pose files.
+        progress_dir: Optional directory for per-video .progress temp files.
+        target_fps: Target FPS for sampling (0 = every frame).
+        n_workers: Parallel workers. Default 4 (ANE handles scheduling).
+        concurrent_frames: Concurrent frame workers per video within the
+            Swift CLI (1 = sequential, >1 = GCD concurrent Vision inference).
+
+    Returns:
+        List of result dicts in completion order.
+    """
+    if not video_paths:
+        return []
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if n_workers is None:
+        n_workers = min(4, len(video_paths))
+
+    args_list = []
+    for vpath in video_paths:
+        vpath = Path(vpath)
+        out = output_dir / f"{vpath.stem}.pose"
+        pfile = str(Path(progress_dir) / f"{vpath.stem}.progress") \
+                if progress_dir else ""
+        args_list.append((str(vpath), str(out), target_fps, pfile, concurrent_frames))
+
+    results: list[dict] = []
+    with ThreadPoolExecutor(max_workers=n_workers) as pool:
+        futures = {pool.submit(_apple_batch_worker, args): Path(args[0])
+                   for args in args_list}
+        for future in as_completed(futures):
+            vpath = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                logger.error(f"Apple Vision failed {vpath.name}: {exc}")
+                results.append({"error": str(exc), "path": str(vpath)})
+
+    return results

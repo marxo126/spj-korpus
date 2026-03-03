@@ -96,10 +96,10 @@ class PoseSegmentDataset(Dataset):
         npz_path = self._find_npz(seg_id)
         d = np.load(str(npz_path))
 
-        pose = d["pose"].astype(np.float32)  # (T, 543, 3)
+        pose = d["pose"].astype(np.float32)  # (T, N, 3) — N may be 543 or filtered
         T = pose.shape[0]
 
-        # Flatten to (T, 1629)
+        # Flatten to (T, N*3)
         features = pose.reshape(T, -1)
 
         # Pad or truncate
@@ -118,7 +118,7 @@ class PoseSegmentDataset(Dataset):
             ])
 
         return {
-            "features": torch.from_numpy(features),  # (max_seq_len, 1629)
+            "features": torch.from_numpy(features),  # (max_seq_len, N*3)
             "mask": torch.from_numpy(mask),           # (max_seq_len,)
             "label": torch.tensor(label_idx, dtype=torch.long),
         }
@@ -132,6 +132,127 @@ class PoseSegmentDataset(Dataset):
         if candidates:
             return candidates[0]
         raise FileNotFoundError(f"NPZ not found for segment {seg_id} in {self.npz_dir}")
+
+
+class AugmentedPoseDataset(Dataset):
+    """Pose dataset with on-the-fly augmentation for few-shot sign learning.
+
+    Each original sample produces ``n_augments`` augmented variants:
+      - Random temporal crop (75-100% of original)
+      - Random speed variation (0.8x-1.2x via frame resampling)
+      - Gaussian noise on coordinates
+      - Random scale jitter (0.9-1.1)
+
+    The first variant (aug_idx=0) is always the unaugmented original.
+    """
+
+    def __init__(
+        self,
+        manifest_df: pd.DataFrame,
+        npz_dir: Path,
+        label_encoder: "LabelEncoder",
+        max_seq_len: int = 300,
+        augment: bool = True,
+        n_augments: int = 10,
+    ):
+        self.npz_dir = Path(npz_dir)
+        self.max_seq_len = max_seq_len
+        self.label_encoder = label_encoder
+        self.augment = augment
+        self.n_augments = n_augments if augment else 1
+
+        self.data: list[tuple[np.ndarray, int]] = []
+        skipped = 0
+
+        for _, row in manifest_df.iterrows():
+            label_str = str(row.get("label", row.get("reviewed_text", row.get("text", "")))).strip()
+            if not label_str or label_str not in label_encoder.label_to_idx:
+                skipped += 1
+                continue
+
+            seg_id = str(row.get("segment_id", Path(str(row.get("npz_path", ""))).stem))
+            npz_path = self.npz_dir / f"{seg_id}.npz"
+            if not npz_path.exists():
+                skipped += 1
+                continue
+
+            d = np.load(str(npz_path))
+            pose = d["pose"].astype(np.float32)  # (T, N, 3) — N may be filtered
+            label_idx = label_encoder.encode(label_str)
+            self.data.append((pose, label_idx))
+
+        logger.info("AugmentedPoseDataset: %d segments loaded (%d skipped), %dx augment",
+                     len(self.data), skipped, self.n_augments)
+
+    def __len__(self) -> int:
+        return len(self.data) * self.n_augments
+
+    def __getitem__(self, idx: int) -> dict:
+        real_idx = idx // self.n_augments
+        aug_idx = idx % self.n_augments
+
+        pose, label_idx = self.data[real_idx]
+
+        if self.augment and aug_idx > 0:
+            pose = self._augment(pose, aug_idx)
+
+        T = pose.shape[0]
+        features = pose.reshape(T, -1)  # (T, 1629)
+
+        if T >= self.max_seq_len:
+            features = features[:self.max_seq_len]
+            mask = np.ones(self.max_seq_len, dtype=np.float32)
+        else:
+            pad_len = self.max_seq_len - T
+            features = np.concatenate([
+                features,
+                np.zeros((pad_len, features.shape[1]), dtype=np.float32),
+            ], axis=0)
+            mask = np.concatenate([
+                np.ones(T, dtype=np.float32),
+                np.zeros(pad_len, dtype=np.float32),
+            ])
+
+        return {
+            "features": torch.from_numpy(features),
+            "mask": torch.from_numpy(mask),
+            "label": torch.tensor(label_idx, dtype=torch.long),
+        }
+
+    def _augment(self, pose: np.ndarray, aug_idx: int) -> np.ndarray:
+        rng = np.random.RandomState(aug_idx * 1000 + id(pose) % 10000)
+        T = pose.shape[0]
+        pose = pose.copy()
+
+        # 1. Temporal crop (75-100%)
+        crop_ratio = rng.uniform(0.75, 1.0)
+        crop_len = max(5, int(T * crop_ratio))
+        start = rng.randint(0, max(1, T - crop_len))
+        pose = pose[start:start + crop_len]
+
+        # 2. Speed variation via frame resampling (0.8x-1.2x)
+        speed = rng.uniform(0.8, 1.2)
+        n_landmarks = pose.shape[1]
+        new_T = max(5, int(pose.shape[0] / speed))
+        if new_T != pose.shape[0]:
+            old_indices = np.linspace(0, pose.shape[0] - 1, new_T)
+            new_pose = np.zeros((new_T, n_landmarks, 3), dtype=np.float32)
+            for i, oi in enumerate(old_indices):
+                lo = int(oi)
+                hi = min(lo + 1, pose.shape[0] - 1)
+                frac = oi - lo
+                new_pose[i] = pose[lo] * (1 - frac) + pose[hi] * frac
+            pose = new_pose
+
+        # 3. Gaussian noise on coordinates
+        noise_std = rng.uniform(0.001, 0.005)
+        pose = pose + rng.randn(*pose.shape).astype(np.float32) * noise_std
+
+        # 4. Random scale jitter (0.9-1.1)
+        scale = rng.uniform(0.9, 1.1)
+        pose = pose * scale
+
+        return pose
 
 
 # ---------------------------------------------------------------------------
@@ -213,12 +334,15 @@ class SinusoidalPositionalEncoding(nn.Module):
 class PoseTransformerEncoder(nn.Module):
     """Transformer encoder for pose-sequence classification.
 
-    Input:  (batch, max_seq_len, 543*3=1629)
+    Input:  (batch, max_seq_len, input_dim)
       -> Linear projection -> d_model
       -> Sinusoidal positional encoding
       -> N Transformer encoder layers
       -> Mean pooling (masked)
       -> Linear -> n_classes
+
+    Default input_dim=1629 (543*3, all landmarks). With SL landmark
+    filtering, use input_dim=SL_INPUT_DIM (~441 = ~147 landmarks * 3).
     """
 
     def __init__(
@@ -413,9 +537,14 @@ def train_model(
             pin_memory=False,
         ) if len(val_ds) > 0 else None
 
+        # Detect input_dim from the first NPZ file
+        sample = train_ds[0]
+        input_dim = sample["features"].shape[-1]
+        logger.info("Detected input_dim=%d from NPZ data", input_dim)
+
         # Model
         model = PoseTransformerEncoder(
-            input_dim=1629,
+            input_dim=input_dim,
             d_model=config.d_model,
             n_heads=config.n_heads,
             d_ff=config.d_ff,
@@ -523,6 +652,7 @@ def train_model(
                     epoch=epoch, val_acc=best_val_acc,
                     n_classes=label_encoder.n_classes,
                     n_train=len(train_ds),
+                    input_dim=input_dim,
                 )
                 state.checkpoint_path = str(ckpt_path)
 
@@ -577,8 +707,15 @@ def load_checkpoint(
     config = TrainingConfig(**ckpt["config"])
     label_encoder = LabelEncoder.from_dict(ckpt["label_encoder"])
 
+    # Detect input_dim: check checkpoint metadata, or infer from weights
+    input_dim = ckpt.get("input_dim", None)
+    if input_dim is None:
+        # Infer from input_proj weight shape: Linear(input_dim, d_model)
+        proj_weight = ckpt["model_state_dict"].get("input_proj.weight")
+        input_dim = proj_weight.shape[1] if proj_weight is not None else 1629
+
     model = PoseTransformerEncoder(
-        input_dim=1629,
+        input_dim=input_dim,
         d_model=config.d_model,
         n_heads=config.n_heads,
         d_ff=config.d_ff,

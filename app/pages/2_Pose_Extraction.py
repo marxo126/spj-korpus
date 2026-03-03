@@ -1,8 +1,8 @@
-"""Pose Extraction page — parallel MediaPipe extraction using separate GPU processes."""
+"""Pose Extraction page — parallel extraction using MediaPipe or Apple Vision."""
 import sys
 import tempfile
 import time
-from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, wait, FIRST_COMPLETED
 from pathlib import Path
 
 import pandas as pd
@@ -10,14 +10,22 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from spj.inventory import pose_exists
-from spj.pose import _batch_worker, ensure_models, recommend_workers
+from spj.pose import (
+    _batch_worker, _metal_gpu_worker, ensure_models, recommend_workers,
+    apple_vision_available, _apple_batch_worker,
+)
+
+# Backend constants
+_BACKEND_METAL = "MediaPipe Metal GPU"
+_BACKEND_CPU = "MediaPipe (CPU)"
+_BACKEND_AV = "Apple Vision (ANE)"
 
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 INVENTORY_CSV = DATA_DIR / "inventory.csv"
 POSE_DIR = DATA_DIR / "pose"
 
 st.header("🏃 Pose Extraction")
-st.caption("Page 2/10 · Extract 543 body+hand+face keypoints from each video using MediaPipe.")
+st.caption("Page 2/10 · Extract 543 body+hand+face keypoints from each video.")
 with st.expander("ℹ️ How to use this page", expanded=False):
     st.markdown("""
 **Needs:**
@@ -62,10 +70,15 @@ col2.metric("Pose done", len(done))
 col3.metric("Pending", len(pending))
 
 # Warn about 0-byte pose files that will be re-extracted
+def _is_zero_byte(p: Path) -> bool:
+    try:
+        return p.stat().st_size == 0
+    except FileNotFoundError:
+        return False
+
 _zero_byte = [
     Path(r["path"]).name for _, r in inv.iterrows()
-    if (POSE_DIR / f"{Path(r['path']).stem}.pose").exists()
-    and (POSE_DIR / f"{Path(r['path']).stem}.pose").stat().st_size == 0
+    if _is_zero_byte(POSE_DIR / f"{Path(r['path']).stem}.pose")
 ]
 if _zero_byte:
     st.warning(
@@ -192,7 +205,7 @@ if _state == "running":
             line    = f"✅ `{vp.name}` — {frames} frames, {dur:.1f}s, {kb} KB [{device}]"
         except Exception as exc:
             line = f"❌ `{vp.name}` — {exc}"
-        log_lines.append(line)
+        log_lines = (log_lines + [line])[-100:]  # keep last 100 entries
         completed_count += 1
 
         # Assign freed slot to the next queued video
@@ -252,9 +265,10 @@ if _state == "running":
         )
         st.session_state["pose_completion_errors"] = errors
 
-        # Clear extraction state, then rerun to show idle UI + success banner
+        # Clear extraction state + HD cache, then rerun to show idle UI + success banner
         for key in _POSE_SS_KEYS:
             st.session_state.pop(key, None)
+        st.session_state.pop("pose_has_hd", None)
         st.rerun()
 
     # ── Continue ───────────────────────────────────────────────────
@@ -266,86 +280,209 @@ if _state == "running":
 # ------------------------------------------------------------------ #
 # Idle state — configuration UI
 # ------------------------------------------------------------------ #
+
+_av_ok = apple_vision_available()
+
+# Three backends: Metal GPU (fastest), Apple Vision (ANE), MediaPipe CPU
+_backend_options = [_BACKEND_METAL, _BACKEND_CPU]
+if _av_ok:
+    _backend_options.append(_BACKEND_AV)
+_default_idx = 0  # Metal GPU is default (fastest on Apple Silicon)
+
+backend = st.radio(
+    "Extraction backend",
+    _backend_options,
+    index=_default_idx,
+    horizontal=True,
+    help="**Metal GPU** — fastest (269 fps, 8 threads, uses 40 GPU cores). "
+         "**CPU** — stable fallback (XNNPACK, separate processes). "
+         "**Apple Vision** — ANE-based (167 fps, 16 workers). "
+         "All produce identical .pose file format.",
+    key="pose_backend",
+)
+_use_apple_vision = (backend == _BACKEND_AV)
+_use_metal_gpu = (backend == _BACKEND_METAL)
+
 try:
     import psutil
     mem      = psutil.virtual_memory()
     free_gb  = mem.available / 1_073_741_824
     total_gb = mem.total     / 1_073_741_824
-    suggested = recommend_workers(len(pending))
+    suggested_cpu = recommend_workers(len(pending))
     st.caption(
-        f"Free RAM: **{free_gb:.1f} GB** / {total_gb:.0f} GB  —  "
-        f"suggested parallel workers: **{suggested}**"
+        f"Free RAM: **{free_gb:.1f} GB** / {total_gb:.0f} GB"
     )
 except ImportError:
-    suggested = 2
+    suggested_cpu = 2
+
+if _use_metal_gpu:
+    # Check if inventory has HD videos — Metal crashes with >2 threads on 1080p
+    # Cached in session_state to avoid opening video files on every Streamlit rerun.
+    if "pose_has_hd" not in st.session_state:
+        _has_hd = False
+        if not pending.empty:
+            try:
+                import cv2 as _cv2
+                for _sp in pending.head(5)["path"].tolist():
+                    _cap = _cv2.VideoCapture(str(_sp))
+                    if _cap.isOpened() and _cap.get(_cv2.CAP_PROP_FRAME_WIDTH) > 720:
+                        _has_hd = True
+                    _cap.release()
+                    if _has_hd:
+                        break
+            except Exception:
+                pass
+        st.session_state["pose_has_hd"] = _has_hd
+    _has_hd = st.session_state["pose_has_hd"]
+    if _has_hd:
+        _default_workers = min(2, max(1, len(pending)))
+        _max_workers = 4
+        _help = ("HD videos detected — Metal CVPixelBuffer pool exhausts above 2-3 threads "
+                 "at 1080p. Use 2 threads for stability (~195 fps).")
+    else:
+        _default_workers = min(8, max(1, len(pending)))
+        _max_workers = 12
+        _help = "Metal GPU threads share one Metal context. 8 threads optimal for small videos (~400 fps)."
+elif _use_apple_vision:
+    _default_workers = min(4, max(1, len(pending)))
+    _max_workers = 16
+    _help = "Apple Vision video workers (each runs Swift CLI subprocess)."
+else:
+    _default_workers = min(suggested_cpu, max(1, len(pending)))
+    _max_workers = 8
+    _help = "CPU workers run as separate processes (XNNPACK)."
 
 n_workers = st.slider(
-    "Parallel workers  (each = one GPU process)",
-    min_value=1, max_value=8,
-    value=min(suggested, max(1, len(pending))),
-    help="Each worker is a separate OS process with its own Metal GPU context. "
-         "More workers = more GPU cores in use simultaneously.",
+    "Parallel workers",
+    min_value=1, max_value=_max_workers,
+    value=_default_workers,
+    help=_help,
 )
-st.caption(
-    f"**{n_workers} worker(s) → CPU (XNNPACK) per process.**  "
-    "MediaPipe's GPU delegate is officially supported on Ubuntu only — "
-    "macOS GPU has known unbounded memory leaks (issues #5652, #6223). "
-    "CPU + XNNPACK across the M4 Max's 16 performance cores is stable and fast."
-)
+if _use_metal_gpu:
+    _hd_note = " HD detected — limited threads to prevent Metal crash." if _has_hd else ""
+    st.caption(
+        f"**{n_workers} thread(s) → Metal GPU (40 cores).**  "
+        f"Threads share one Metal context.{_hd_note}"
+    )
+elif _use_apple_vision:
+    frame_concurrent = st.slider(
+        "Concurrent frames per video",
+        min_value=1, max_value=16, value=4,
+        help="GCD concurrent Vision inference within each video. "
+             "ANE saturates at ~4 concurrent requests — higher values "
+             "just use more memory with no speed gain.",
+        key="pose_frame_concurrent",
+    )
+    st.caption(
+        f"**{n_workers} worker(s) × {frame_concurrent} concurrent frames → Apple Vision (ANE).**  "
+        f"Total in-flight: {n_workers * frame_concurrent} frames."
+    )
+else:
+    st.caption(
+        f"**{n_workers} process(es) → CPU (XNNPACK).**  "
+        "Each process runs independently on the CPU cores."
+    )
 
 # ------------------------------------------------------------------ #
-# Pending table
+# Video selection
 # ------------------------------------------------------------------ #
-st.subheader("Pending videos")
-if pending.empty:
-    st.success("All videos have been processed!")
+st.subheader("Select videos to extract")
 
-if not pending.empty:
-    show_cols = [c for c in ["filename", "duration_sec", "fps", "file_size_mb"]
-                 if c in pending.columns]
-    st.dataframe(pending[show_cols], use_container_width=True, hide_index=True)
+if pending.empty and done.empty:
+    st.success("No videos in inventory.")
+    st.stop()
 
-# ------------------------------------------------------------------ #
-# Re-extract option for already-done videos
-# ------------------------------------------------------------------ #
-if not done.empty:
-    with st.expander(f"🔄 Re-extract pose ({len(done)} done)", expanded=False):
-        st.caption(
-            "Select videos to re-extract. Their existing .pose files will be "
-            "deleted and new ones generated."
-        )
-        reextract_names = [Path(str(p)).name for p in done["path"]]
-        selected = st.multiselect(
-            "Videos to re-extract",
-            options=reextract_names,
-            key="pose_reextract_sel",
-        )
-        if selected and st.button("🗑 Delete selected .pose files & re-extract"):
-            for name in selected:
-                stem = Path(name).stem
-                pose_file = POSE_DIR / f"{stem}.pose"
-                if pose_file.exists():
-                    pose_file.unlink()
-            # Refresh inventory
-            inv["pose_extracted"] = inv["path"].apply(
-                lambda p: pose_exists(Path(p), POSE_DIR)
-            )
-            st.session_state["inventory"] = inv
+# Build a combined list: pending first, then done (for re-extract)
+_sel_rows: list[dict] = []
+for _, r in pending.iterrows():
+    name = Path(str(r["path"])).name
+    _sel_rows.append({
+        "filename": name,
+        "status": "pending",
+        "duration_sec": r.get("duration_sec", 0),
+        "fps": r.get("fps", 0),
+        "file_size_mb": r.get("file_size_mb", 0),
+        "_path": str(r["path"]),
+    })
+for _, r in done.iterrows():
+    name = Path(str(r["path"])).name
+    _sel_rows.append({
+        "filename": name,
+        "status": "done",
+        "duration_sec": r.get("duration_sec", 0),
+        "fps": r.get("fps", 0),
+        "file_size_mb": r.get("file_size_mb", 0),
+        "_path": str(r["path"]),
+    })
+
+all_filenames = [r["filename"] for r in _sel_rows]
+pending_filenames = [r["filename"] for r in _sel_rows if r["status"] == "pending"]
+_path_by_name = {r["filename"]: r["_path"] for r in _sel_rows}
+_pending_set = set(pending_filenames)
+
+# --- Selection mode: multiselect for small sets, radio for large ---
+_MULTISELECT_THRESHOLD = 500
+
+if len(all_filenames) <= _MULTISELECT_THRESHOLD:
+    # Small inventory — use multiselect widget
+    qcol1, qcol2, qcol3 = st.columns(3)
+    with qcol1:
+        if st.button(f"Select all pending ({len(pending_filenames)})", use_container_width=True):
+            st.session_state["pose_video_multiselect"] = pending_filenames
             st.rerun()
+    with qcol2:
+        if st.button(f"Select all ({len(all_filenames)})", use_container_width=True):
+            st.session_state["pose_video_multiselect"] = all_filenames
+            st.rerun()
+    with qcol3:
+        if st.button("Clear selection", use_container_width=True):
+            st.session_state["pose_video_multiselect"] = []
+            st.rerun()
+
+    if "pose_video_multiselect" not in st.session_state:
+        st.session_state["pose_video_multiselect"] = pending_filenames
+
+    selected_names = st.multiselect(
+        "Videos to extract",
+        options=all_filenames,
+        help="Select one or more videos. Already-done videos will be re-extracted.",
+        key="pose_video_multiselect",
+    )
+else:
+    # Large inventory — radio selection to avoid DOM overload
+    _selection_mode = st.radio(
+        "Select videos",
+        [
+            f"All pending ({len(pending_filenames)})",
+            f"All videos ({len(all_filenames)})",
+        ],
+        horizontal=True,
+        key="pose_selection_mode",
+    )
+    if _selection_mode.startswith("All pending"):
+        selected_names = pending_filenames
+    else:
+        selected_names = all_filenames
+
+# Show selected info
+n_selected = len(selected_names)
+n_reextract = sum(1 for n in selected_names if n not in _pending_set)
+if n_selected:
+    info_parts = [f"**{n_selected}** video(s) selected"]
+    if n_reextract:
+        info_parts.append(f"{n_reextract} will be re-extracted (existing .pose replaced)")
+    st.caption(" · ".join(info_parts))
+else:
+    st.info("Select at least one video to extract.")
+    st.stop()
 
 # ------------------------------------------------------------------ #
 # Extract button
 # ------------------------------------------------------------------ #
-# Refresh pending after possible re-extract deletion
-pending = inv[~inv["pose_extracted"]].copy()
-
-if pending.empty:
-    st.stop()
-
 bcol1, bcol2 = st.columns([3, 2])
 with bcol1:
     start_clicked = st.button(
-        f"▶ Extract All ({len(pending)} pending)",
+        f"▶ Extract Selected ({n_selected})",
         type="primary", use_container_width=True,
     )
 with bcol2:
@@ -361,14 +498,21 @@ if not start_clicked:
 
 POSE_DIR.mkdir(parents=True, exist_ok=True)
 
-with st.spinner("Checking / downloading MediaPipe models (first run only)…"):
-    try:
-        ensure_models()
-    except Exception as exc:
-        st.error(f"Model download failed: {exc}")
-        st.stop()
+if not _use_apple_vision:
+    # Metal GPU and CPU both need MediaPipe models
+    with st.spinner("Checking / downloading MediaPipe models (first run only)…"):
+        try:
+            ensure_models()
+        except Exception as exc:
+            st.error(f"Model download failed: {exc}")
+            st.stop()
 
-video_paths = [Path(r["path"]) for _, r in pending.iterrows()]
+# Delete existing .pose files for re-extract selections
+for name in selected_names:
+    if name not in _pending_set:
+        (POSE_DIR / f"{Path(name).stem}.pose").unlink(missing_ok=True)
+
+video_paths = [Path(_path_by_name[name]) for name in selected_names]
 total = len(video_paths)
 
 tmp_dir = Path(tempfile.mkdtemp(prefix="spj_pose_"))
@@ -377,15 +521,31 @@ progress_files = {
     for vp in video_paths
 }
 
+# Start executor — NOT in a `with` block so it stays alive across reruns
+# Select backend-specific worker, executor type, and third arg value
+if _use_apple_vision:
+    _worker_fn = _apple_batch_worker
+    _ExecutorCls = ThreadPoolExecutor
+    _third_arg = 0  # target_fps
+elif _use_metal_gpu:
+    _worker_fn = _metal_gpu_worker
+    _ExecutorCls = ThreadPoolExecutor
+    _third_arg = ""  # model_dir_str
+else:
+    _worker_fn = _batch_worker
+    _ExecutorCls = ProcessPoolExecutor
+    _third_arg = ""  # model_dir_str
+
 args_list = [
-    (str(vp), str(POSE_DIR / f"{vp.stem}.pose"), "", str(progress_files[str(vp)]))
+    (str(vp), str(POSE_DIR / f"{vp.stem}.pose"), _third_arg,
+     str(progress_files[str(vp)]))
     for vp in video_paths
 ]
-
-# Start executor — NOT in a `with` block so it stays alive across reruns
-executor    = ProcessPoolExecutor(max_workers=n_workers)
+if _use_apple_vision:
+    args_list = [a + (frame_concurrent,) for a in args_list]
+executor = _ExecutorCls(max_workers=n_workers)
 futures_map = {
-    executor.submit(_batch_worker, args): Path(args[0])
+    executor.submit(_worker_fn, args): Path(args[0])
     for args in args_list
 }
 
