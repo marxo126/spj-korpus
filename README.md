@@ -215,5 +215,6 @@ You are free to share and adapt this work for non-commercial purposes, with attr
 ## Author
 
 **Marek Kanas** — deaf developer, Slovakia
+[InnoSign](https://www.innosign.eu) | [website: innosign.eu]
 
 Built with [Claude Code](https://claude.ai/claude-code) by Anthropic.
