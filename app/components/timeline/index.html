@@ -33,6 +33,44 @@ video { background: #000; border-radius: 6px; flex: 1; min-width: 0; max-width: 
 #zoomLabel { opacity: .6; min-width: 40px; }
 #trimInfo { opacity: .7; margin-left: auto; font-variant-numeric: tabular-nums; }
 </style>
+<script>
+// Streamlit component communication shim for vanilla HTML components.
+// Implements the postMessage protocol that Streamlit's iframe host expects.
+// Based on streamlit-component-lib@2.0.0/dist/streamlit.js
+(function() {
+  function sendBackMsg(type, data) {
+    var msg = {isStreamlitMessage: true, type: type};
+    if (data) { for (var k in data) { if (data.hasOwnProperty(k)) msg[k] = data[k]; } }
+    window.parent.postMessage(msg, "*");
+  }
+  var Streamlit = {
+    RENDER_EVENT: "streamlit:render",
+    events: new EventTarget(),
+    setComponentReady: function() {
+      sendBackMsg("streamlit:componentReady", {apiVersion: 1});
+    },
+    setComponentValue: function(value) {
+      sendBackMsg("streamlit:setComponentValue", {value: value, dataType: "json"});
+    },
+    setFrameHeight: function(height) {
+      if (height === undefined) height = document.body.scrollHeight;
+      sendBackMsg("streamlit:setFrameHeight", {height: height});
+    }
+  };
+  window.addEventListener("message", function(e) {
+    if (e.data && e.data.type === Streamlit.RENDER_EVENT) {
+      var args = e.data.args || {};
+      var disabled = Boolean(e.data.disabled);
+      var theme = e.data.theme;
+      var event = new CustomEvent(Streamlit.RENDER_EVENT, {
+        detail: {disabled: disabled, args: args, theme: theme}
+      });
+      Streamlit.events.dispatchEvent(event);
+    }
+  });
+  window.Streamlit = Streamlit;
+})();
+</script>
 </head>
 <body>
 <div id="wrapper">
