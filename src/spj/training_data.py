@@ -896,7 +896,7 @@ PST_AUTO_SUGGESTED = "auto_suggested"
 _VALID_HANDS = ("right", "left")
 
 
-def _make_pairing_dict(
+def make_pairing_dict(
     pairing_id: str,
     segment_id: str,
     video_path: str,
@@ -909,6 +909,11 @@ def _make_pairing_dict(
     fps: float,
     motion_confidence: float = 0.0,
     note: str = "",
+    word: str = "",
+    gloss_id: str = "",
+    status: str = PST_PENDING,
+    suggestion_gloss: str = "",
+    suggestion_confidence: float = 0.0,
 ) -> dict:
     """Build a single pairing dict matching the pairings CSV schema."""
     return {
@@ -922,11 +927,11 @@ def _make_pairing_dict(
         "sign_frame_start": sign_frame_start,
         "sign_frame_end": sign_frame_end,
         "motion_confidence": motion_confidence,
-        "word": "",
-        "gloss_id": "",
-        "status": PST_PENDING,
-        "suggestion_gloss": "",
-        "suggestion_confidence": 0.0,
+        "word": word,
+        "gloss_id": gloss_id,
+        "status": status,
+        "suggestion_gloss": suggestion_gloss,
+        "suggestion_confidence": suggestion_confidence,
         "fps": float(fps),
         "note": note,
     }
@@ -991,7 +996,7 @@ def detect_signs_in_segment(
 
             pairing_id = f"{stem}_{abs_start_ms:08d}_{hand[0]}"
 
-            pairings.append(_make_pairing_dict(
+            pairings.append(make_pairing_dict(
                 pairing_id=pairing_id,
                 segment_id=segment_id,
                 video_path=video_path,
@@ -1051,7 +1056,7 @@ def create_manual_pairing(
     frame_end = int(sign_end_ms * fps / 1000)
     pairing_id = f"{stem}_{sign_start_ms:08d}_{hand[0]}_M{_manual_counter}"
 
-    return _make_pairing_dict(
+    return make_pairing_dict(
         pairing_id=pairing_id,
         segment_id=segment_id,
         video_path=video_path,
@@ -1382,19 +1387,17 @@ def pose_frame_figure(
     _add_edges(HAND_CONNECTIONS, _LEFT_HAND_OFFSET,  "limegreen")
     _add_edges(HAND_CONNECTIONS, _RIGHT_HAND_OFFSET, "crimson")
 
-    _add_dots(_BODY_OFFSET,       _BODY_OFFSET + 33,       "royalblue", "body")
-    _add_dots(_LEFT_HAND_OFFSET,  _LEFT_HAND_OFFSET + 21,  "limegreen", "left hand")
-    _add_dots(_RIGHT_HAND_OFFSET, _RIGHT_HAND_OFFSET + 21, "crimson",   "right hand")
+    _add_dots(_BODY_OFFSET,       _BODY_OFFSET + 33,       "royalblue", "body", size=3)
+    _add_dots(_LEFT_HAND_OFFSET,  _LEFT_HAND_OFFSET + 21,  "limegreen", "left hand", size=3)
+    _add_dots(_RIGHT_HAND_OFFSET, _RIGHT_HAND_OFFSET + 21, "crimson",   "right hand", size=3)
 
-    # Face features
-    _add_edges(_FACE_OVAL,           _FACE_OFFSET, "rgba(255,215,0,0.3)")
+    # Face features — connections only, no individual dots
+    _add_edges(_FACE_OVAL,           _FACE_OFFSET, "rgba(255,215,0,0.2)")
     _add_edges(_FACE_LIPS,           _FACE_OFFSET, "hotpink")
     _add_edges(_FACE_LEFT_EYE,       _FACE_OFFSET, "cyan")
     _add_edges(_FACE_RIGHT_EYE,      _FACE_OFFSET, "cyan")
     _add_edges(_FACE_LEFT_EYEBROW,   _FACE_OFFSET, "orange")
     _add_edges(_FACE_RIGHT_EYEBROW,  _FACE_OFFSET, "orange")
-
-    _add_dots(_FACE_OFFSET, _FACE_OFFSET + 468, "rgba(255,215,0,0.4)", "face", size=2)
 
     # Auto-adapt axis ranges to visible landmark bounding box
     vis_x = [frame_xyz[i, 0]     for i in range(min(543, len(visible))) if visible[i]]
@@ -1533,20 +1536,21 @@ _POSE_ANIM_TEMPLATE = _Template(
     'if(gc(f,i)<.1)continue;var p=gp(f,i);'
     'x.beginPath();x.arc(mx(p[0]),my(p[1]),sz,0,6.283);x.fill()}}'
 
-    # draw full frame
+    # draw full frame — sizes scale with canvas
     'function dr(f){uw();'
     'x.clearRect(0,0,W,H);x.fillStyle="#000";x.fillRect(0,0,W,H);'
-    # body — face + shoulders + elbows (0-14) for body direction
-    'el(f,BC,0,"royalblue",3.5);dt(f,0,15,"royalblue",6);'
-    # hands — prominent for sign language (detailed hand model)
-    'el(f,HC,33,"limegreen",3);dt(f,33,54,"limegreen",5);'
-    'el(f,HC,54,"crimson",3);dt(f,54,75,"crimson",5);'
-    # face — enlarged for HiDPI clarity
-    'el(f,FO,75,"rgba(255,215,0,0.25)",1.5);'
-    'el(f,FL,75,"hotpink",3);'
-    'el(f,FLE,75,"cyan",3);el(f,FRE,75,"cyan",3);'
-    'el(f,FLB,75,"orange",3);el(f,FRB,75,"orange",3);'
-    'dt(f,75,543,"rgba(255,215,0,0.35)",3)}'
+    'if(f<0||f>=NF)return;'
+    'var s=Math.max(1,W/200);'  # scale factor: 1px per 200px canvas width
+    # body — shoulders + elbows (0-14)
+    'el(f,BC,0,"royalblue",1.5*s);dt(f,0,15,"royalblue",2.5*s);'
+    # hands — prominent for sign language
+    'el(f,HC,33,"limegreen",1.2*s);dt(f,33,54,"limegreen",2*s);'
+    'el(f,HC,54,"crimson",1.2*s);dt(f,54,75,"crimson",2*s);'
+    # face — connections only, no dots
+    'el(f,FO,75,"rgba(255,215,0,0.2)",0.8*s);'
+    'el(f,FL,75,"hotpink",1.2*s);'
+    'el(f,FLE,75,"cyan",1*s);el(f,FRE,75,"cyan",1*s);'
+    'el(f,FLB,75,"orange",1*s);el(f,FRB,75,"orange",1*s)}'
 
     # playback state
     'var fr=0,pl=true,lo=true,spd=1,lt=0;'
@@ -1830,18 +1834,18 @@ _SYNCED_ANIM_TEMPLATE = _Template(
     'if(gc(f,i)<.1)continue;var p=gp(f,i);'
     'x.beginPath();x.arc(mx(p[0]),my(p[1]),sz,0,6.283);x.fill()}}'
 
-    # draw full frame
+    # draw full frame — sizes scale with canvas
     'function dr(f){uw();'
     'x.clearRect(0,0,W,H);x.fillStyle="#000";x.fillRect(0,0,W,H);'
     'if(f<0||f>=NF)return;'
-    'el(f,BC,0,"royalblue",3.5);dt(f,0,15,"royalblue",6);'
-    'el(f,HC,33,"limegreen",3);dt(f,33,54,"limegreen",5);'
-    'el(f,HC,54,"crimson",3);dt(f,54,75,"crimson",5);'
-    'el(f,FO,75,"rgba(255,215,0,0.25)",1.5);'
-    'el(f,FL,75,"hotpink",3);'
-    'el(f,FLE,75,"cyan",3);el(f,FRE,75,"cyan",3);'
-    'el(f,FLB,75,"orange",3);el(f,FRB,75,"orange",3);'
-    'dt(f,75,543,"rgba(255,215,0,0.35)",3)}'
+    'var s=Math.max(1,W/200);'  # scale factor: 1px per 200px canvas width
+    'el(f,BC,0,"royalblue",1.5*s);dt(f,0,15,"royalblue",2.5*s);'
+    'el(f,HC,33,"limegreen",1.2*s);dt(f,33,54,"limegreen",2*s);'
+    'el(f,HC,54,"crimson",1.2*s);dt(f,54,75,"crimson",2*s);'
+    'el(f,FO,75,"rgba(255,215,0,0.2)",0.8*s);'
+    'el(f,FL,75,"hotpink",1.2*s);'
+    'el(f,FLE,75,"cyan",1*s);el(f,FRE,75,"cyan",1*s);'
+    'el(f,FLB,75,"orange",1*s);el(f,FRB,75,"orange",1*s)}'
 
     # format time
     'function fm(s){'
@@ -1976,4 +1980,243 @@ def synced_video_pose_html(
         face_left_brow=json.dumps(_FACE_LEFT_EYEBROW),
         face_right_brow=json.dumps(_FACE_RIGHT_EYEBROW),
         face_oval=json.dumps(_FACE_OVAL),
+    )
+
+
+# ---------------------------------------------------------------------------
+# EAF Harvest — bulk import of human-corrected S1_Gloss tiers
+# ---------------------------------------------------------------------------
+
+GLOSS_RE = re.compile(r"^[A-Z][A-Z0-9_-]+$")
+
+_GLOSS_TIER_HANDS = {"S1_Gloss_RH": "right", "S1_Gloss_LH": "left"}
+
+
+def parse_gloss_value(
+    value: str,
+    glossary: "Optional[Glossary]" = None,
+) -> tuple[str, str]:
+    """Parse a gloss annotation value into (word, gloss_id).
+
+    UPPERCASE values matching GLOSS_RE are treated as gloss_id directly.
+    Anything else is treated as a word and optionally looked up in the glossary.
+
+    Returns:
+        (word, gloss_id) tuple — one or both may be empty string.
+    """
+    value = value.strip()
+    if not value:
+        return "", ""
+    if GLOSS_RE.match(value):
+        return "", value
+    word = value.lower()
+    gloss_id = ""
+    if glossary:
+        matches = glossary.lookup(word)
+        if matches:
+            gloss_id = matches[0]
+    return word, gloss_id
+
+
+def harvest_eaf_annotations(
+    eaf: "pympi.Eaf",
+    stem: str,
+    video_path: str,
+    pose_path: str,
+    fps: float,
+    glossary: "Optional[Glossary]" = None,
+) -> list[dict]:
+    """Extract human S1_Gloss_RH / S1_Gloss_LH annotations as pairing dicts.
+
+    Gloss values matching ``^[A-Z][A-Z0-9_-]+$`` are treated as gloss_id
+    directly; anything else is treated as a word and looked up in the glossary
+    via its reverse index (``glossary.lookup(word)``).
+
+    Args:
+        eaf:        Already-loaded pympi.Eaf instance.
+        stem:       File stem (used for pairing_id / segment_id).
+        video_path: Path string to the source video.
+        pose_path:  Path string to the .pose file.
+        fps:        Frame rate of the video.
+        glossary:   Optional glossary for word→gloss_id lookup.
+
+    Returns:
+        List of pairing dicts (same schema as pairings.csv rows).
+    """
+    results: list[dict] = []
+    present_tiers = eaf.get_tier_names()
+
+    for tier_name, hand in _GLOSS_TIER_HANDS.items():
+        if tier_name not in present_tiers:
+            continue
+        for start_ms, end_ms, value, *_ in eaf.get_annotation_data_for_tier(tier_name):
+            value = str(value).strip() if not pd.isna(value) else ""
+            if not value:
+                continue
+
+            word, gloss_id = parse_gloss_value(value, glossary)
+
+            results.append(make_pairing_dict(
+                pairing_id=f"{stem}_{start_ms:08d}_{hand[0]}_E",
+                segment_id=f"{stem}_eaf",
+                video_path=video_path,
+                pose_path=pose_path,
+                hand=hand,
+                sign_start_ms=int(start_ms),
+                sign_end_ms=int(end_ms),
+                sign_frame_start=int(start_ms * fps / 1000),
+                sign_frame_end=int(end_ms * fps / 1000),
+                fps=fps,
+                note="eaf_harvest",
+                word=word,
+                gloss_id=gloss_id,
+                status=PST_PAIRED,
+            ))
+
+    return results
+
+
+def harvest_eaf_batch(
+    annotations_dir: Path,
+    pose_dir: Path,
+    inventory_df: pd.DataFrame,
+    pairings_path: Path,
+    glossary: "Optional[Glossary]" = None,
+    progress_callback: "Optional[callable]" = None,
+) -> dict:
+    """Bulk-harvest human S1_Gloss annotations from all EAF files.
+
+    Scans *annotations_dir* for .eaf files that have human-tier annotations,
+    matches each to the inventory for video_path / fps, and appends new paired
+    rows to *pairings_path* (deduplicating by stem+start_ms+hand).
+
+    Args:
+        annotations_dir: Directory containing .eaf files.
+        pose_dir:        Directory containing .pose files.
+        inventory_df:    Inventory DataFrame (must have ``filename``, ``fps`` columns).
+        pairings_path:   Path to pairings.csv (created if missing).
+        glossary:        Optional glossary for word→gloss_id lookup.
+        progress_callback: Optional ``fn(current, total)`` for progress reporting.
+
+    Returns:
+        Dict with keys: n_files_scanned, n_with_annotations, n_new_pairings,
+        n_skipped_dupes.
+    """
+    from spj.eaf import load_eaf
+
+    annotations_dir = Path(annotations_dir)
+    pose_dir = Path(pose_dir)
+    eaf_files = sorted(annotations_dir.glob("*.eaf"))
+
+    # Build inventory lookup: stem → (video_path, fps)  (vectorized)
+    vp_col = "video_path" if "video_path" in inventory_df.columns else "path"
+    inv_lookup: dict[str, tuple[str, float]] = dict(zip(
+        inventory_df["filename"].apply(lambda f: Path(str(f)).stem),
+        zip(inventory_df[vp_col].astype(str), inventory_df["fps"].astype(float)),
+    ))
+
+    n_scanned = 0
+    n_with_ann = 0
+    all_new: list[dict] = []
+    n_dupes = 0
+    existing_df: pd.DataFrame = pd.DataFrame()
+    dedup_set: set[tuple[str, int, str]] | None = None  # lazy init
+
+    n_total = len(eaf_files)
+    gloss_tiers = tuple(_GLOSS_TIER_HANDS.keys())
+
+    for i, eaf_path in enumerate(eaf_files):
+        n_scanned += 1
+        if progress_callback and (i % 50 == 0 or i == n_total - 1):
+            progress_callback(i + 1, n_total)
+
+        stem = eaf_path.stem
+
+        # Check inventory first (cheap) before loading EAF (expensive)
+        info = inv_lookup.get(stem)
+        if not info:
+            continue
+        video_path, fps = info
+
+        try:
+            eaf = load_eaf(eaf_path)
+        except Exception:
+            logger.warning("Failed to load EAF: %s", eaf_path)
+            continue
+
+        # Check for human gloss tiers (tier_names is O(1))
+        present = eaf.get_tier_names()
+        if not any(t in present for t in gloss_tiers):
+            continue
+
+        # Harvest annotations — returns empty list if tiers exist but are empty
+        pairings = harvest_eaf_annotations(
+            eaf, stem, video_path, str(pose_dir / f"{stem}.pose"),
+            fps, glossary,
+        )
+        if not pairings:
+            continue
+        n_with_ann += 1
+
+        # Lazy-init dedup set on first file with annotations
+        if dedup_set is None:
+            existing_df = load_pairings_csv(pairings_path)
+            if existing_df.empty:
+                dedup_set = set()
+            else:
+                dedup_set = set(zip(
+                    existing_df["video_path"].apply(lambda p: Path(p).stem),
+                    existing_df["sign_start_ms"].astype(int),
+                    existing_df["hand"].astype(str),
+                ))
+
+        for p in pairings:
+            key = (stem, p["sign_start_ms"], p["hand"])
+            if key in dedup_set:
+                n_dupes += 1
+                continue
+            dedup_set.add(key)
+            all_new.append(p)
+
+    # Append and save
+    if all_new:
+        new_df = pd.DataFrame(all_new)
+        if not existing_df.empty:
+            combined = pd.concat([existing_df, new_df], ignore_index=True)
+        else:
+            combined = new_df
+        save_pairings_csv(combined, pairings_path)
+
+    return {
+        "n_files_scanned": n_scanned,
+        "n_with_annotations": n_with_ann,
+        "n_new_pairings": len(all_new),
+        "n_skipped_dupes": n_dupes,
+    }
+
+
+def harvest_eaf_auto(data_dir: Path) -> Optional[dict]:
+    """Convenience wrapper: resolve paths, load inputs, run harvest.
+
+    Returns harvest result dict, or ``None`` if prerequisites are missing
+    (no annotations dir or no inventory.csv).
+    """
+    data_dir = Path(data_dir)
+    annotations_dir = data_dir / "annotations"
+    inventory_path = data_dir / "inventory.csv"
+    if not annotations_dir.exists() or not inventory_path.exists():
+        return None
+
+    glossary_path = data_dir / "training" / "glossary.json"
+    glossary = None
+    if glossary_path.exists():
+        from spj.glossary import load_glossary
+        glossary = load_glossary(glossary_path)
+
+    return harvest_eaf_batch(
+        annotations_dir=annotations_dir,
+        pose_dir=data_dir / "pose",
+        inventory_df=pd.read_csv(inventory_path),
+        pairings_path=data_dir / "training" / "pairings.csv",
+        glossary=glossary,
     )

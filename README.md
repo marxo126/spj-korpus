@@ -12,7 +12,7 @@ SPJ-Korpus is an end-to-end AI-assisted pipeline for building a sign language co
 
 - **Pose extraction** — MediaPipe Holistic (543 landmarks) with Metal GPU acceleration (~400 fps)
 - **AI pre-annotation** — automatic sign boundary detection and gloss suggestion
-- **Active learning loop** — AI suggests → deaf annotators correct in ELAN → corrections retrain the model → better suggestions
+- **Active learning loop** — AI suggests → annotators review in-app or in ELAN → corrections retrain the model → better suggestions
 - **Training pipeline** — PoseTransformerEncoder with category transfer learning (24.9% top-1 on 516 signs)
 - **Evaluation & inference** — model comparison, per-class metrics, prediction output to ELAN
 - **MCP server** — 12 pipeline tools for Claude Code integration
@@ -37,7 +37,7 @@ Video → MediaPipe Pose → .pose files → EAF Pre-annotation
                                     Better AI suggestions → faster annotation
 ```
 
-### 11 Streamlit Pages
+### 12 Streamlit Pages
 
 | # | Page | Purpose |
 |---|------|---------|
@@ -47,11 +47,12 @@ Video → MediaPipe Pose → .pose files → EAF Pre-annotation
 | 4 | Download | Download videos from URLs/playlists with subtitles |
 | 5 | PreAnnotation | AI-generated sign boundaries from pose data |
 | 6 | Subtitles | Extract and manage subtitle files |
-| 7 | Training Data | Align pose segments to subtitles, export .npz training data |
+| 7 | Training Data | Align pose segments to subtitles, export .npz training data, EAF harvest |
 | 8 | Training | Train PoseTransformerEncoder models |
 | 9 | Evaluation | Evaluate models with confusion matrices and per-class F1 |
 | 10 | Inference | Run predictions on new videos, write to ELAN AI tiers |
 | 11 | Assistant | AI chat for annotators (requires Anthropic API key) |
+| 12 | AI Review | Review AI predictions with synced video+pose player, trim boundaries, approve/correct |
 
 ### Backend Modules
 
@@ -67,6 +68,8 @@ Video → MediaPipe Pose → .pose files → EAF Pre-annotation
 | `glossary.py` | SPJ glossary management with ID-glosses |
 | `orchestrator.py` | Active learning orchestrator (milestone-based retraining) |
 | `mcp_server.py` | MCP server exposing 12 pipeline tools |
+| `ssl_pretrain.py` | Self-supervised masked pose pre-training |
+| `clustering.py` | Sign clustering for exploratory analysis |
 | `downloader.py` | Multi-source video download (YouTube, dictionary CSV, FTP, HTTP) |
 
 ---
@@ -237,6 +240,19 @@ SPJ-Korpus is phase 1 of a 3-phase project:
 2. **Training app** — free Slovak Sign Language training tool for the deaf community
 3. **AI interpretation** — when human interpreters are unavailable (~30 for all of Slovakia), AI-powered sign language interpretation and real-time subtitles
 4. **Expand to more languages** — adapt the pipeline for other minority sign languages across Europe
+
+---
+
+## Related Research
+
+SPJ-Korpus builds on established research in pose-based sign language recognition:
+
+- **[Google Isolated Sign Language Recognition](https://www.kaggle.com/competitions/asl-signs)** (Kaggle 2023) — Same approach: MediaPipe 543 landmarks → selected subset → Transformer encoder for isolated sign classification. Winning solutions validated that ~130 selected landmarks + 1D conv/Transformer architectures work well for this task.
+- **[SignBERT](https://github.com/hubuwei/SignBERT)** (Hu et al., ICCV 2021) — Hand-model-aware self-supervised pretraining. Used as transfer learning backbone.
+- **[OpenHands](https://github.com/AI4Bharat/OpenHands)** (AI4Bharat) — Apache 2.0 sign language recognition toolkit. Alternative backbone for transfer learning.
+- **[SignCLIP](https://github.com/J22Melody/signclip)** — Multilingual sign language embedding space (44 SLs). Frozen feature extractor option.
+- **[Corpus NGT](https://www.ru.nl/corpusngtuk/)** — Dutch Sign Language corpus. Annotation conventions and tier structure adapted for SPJ.
+- **[DGS-Korpus](https://www.sign-lang.uni-hamburg.de/dgs-korpus/)** — German Sign Language corpus. ID-gloss methodology reference.
 
 ---
 
