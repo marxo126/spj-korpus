@@ -5,6 +5,79 @@ facts and rules most likely to cause mistakes if forgotten.
 
 ---
 
+## HARD RULES
+
+| # | Rule |
+|---|------|
+| 1 | ALWAYS use `.venv/bin/python` — NEVER `python` or `python3` (system Python is 3.14, project uses 3.13) |
+| 2 | NEVER assume `.pose` and `.npz` have the same shape — `.pose` = `(T,1,543,3)`, `.npz` = `(T,96,3)` |
+| 3 | NEVER use `multiprocessing.Process` for ML training — MPS tensors can't cross processes; use `threading.Thread` |
+| 4 | NEVER mix other sign language corpora into SPJ training sets — SPJ only (ISO `svk`) |
+| 5 | NEVER use external data for ML training without a signed written agreement |
+| 6 | NEVER invent ELAN tier names — use exact names from the tier table below |
+| 7 | NEVER use `str(value)` on pandas values without `pd.isna()` check first |
+| 8 | NEVER use `width="stretch"` in Streamlit — use `use_container_width=True` |
+| 9 | After every fix/feature: run `/simplify` on changed code — review for reuse, quality, efficiency |
+| 10 | Always go through `load_pose_arrays()` for pose data — never assume confidence shape |
+| 11 | Label column: always derive from `reviewed_text` / `text` — manifest may lack `label` column |
+| 12 | Metal GPU: max 2 threads for HD (>720p) video, 8 threads for small video |
+
+---
+
+## Standard Workflow (every task)
+
+```
+Fix/Feature → pytest → /simplify → streamlit test → commit
+```
+
+### Step 1: Fix/Feature
+Write code, fix bug, or implement feature.
+
+### Step 2: Tests
+`.venv/bin/python -m pytest` — must pass before proceeding.
+
+### Step 3: `/simplify` (code review)
+Run `/simplify` skill on changed files. Checks reuse, quality, efficiency. Fix any issues found.
+
+### Step 4: Streamlit Test
+Run the affected page in Streamlit and verify it works end-to-end:
+```bash
+cd SPJ-korpus && .venv/bin/python -m streamlit run app/pages/N_PageName.py
+```
+Click through the workflow like a real user. Check data loads, buttons work, errors handled.
+
+### Step 5: Commit
+`git commit` — no uncommitted changes left in working tree.
+
+---
+
+## Verification Checklist (every task)
+
+| # | Check | Command | When |
+|---|-------|---------|------|
+| 1 | Import check | `.venv/bin/python -c "import spj"` | Always |
+| 2 | Tests | `.venv/bin/python -m pytest` | Always |
+| 3 | `/simplify` | Run on changed files | Always |
+| 4 | Streamlit page | `.venv/bin/python -m streamlit run app/pages/N_PageName.py` | UI/page changed |
+| 5 | MCP tools | Restart Claude Code, verify tool works | MCP tool changed |
+| 6 | Pose shape | Verify `.pose` vs `.npz` dims in changed code | Pose/training code changed |
+| 7 | **git commit** | No uncommitted changes left | Always last step |
+
+Quick: `.venv/bin/python -m pytest && echo "All checks passed"`
+
+---
+
+## Core Behavior
+
+- **Plan first:** Complex tasks start in plan mode. If sideways: STOP, re-plan.
+- **Context7 workflow:** `resolve-library-id` → `query-docs` for torch, transformers, streamlit, mediapipe, pympi.
+- **Verify:** Run checks until green before handoff. No half-verified work.
+- **Memory loop:** After corrections, update CLAUDE.md Mistakes section. Keep short/high-signal.
+- **Concision:** Report back extremely concise.
+- **Subagents:** For complex multi-part tasks, spawn parallel Task agents with narrow scope.
+
+---
+
 ## Tech Stack
 
 **Language:** Python 3.13 (managed by `uv`, venv at `.venv/`)
@@ -203,8 +276,10 @@ Confirm all data-sharing agreements are signed with all partner organizations be
 | 8 | Training | `manifest.csv` + `.npz` | `.pt` checkpoints in `data/models/` |
 | 9 | Evaluation | Checkpoint + test split | JSON/CSV reports in `data/evaluations/` |
 | 10 | Inference | Checkpoint + videos | Predicted glosses written to EAF AI tiers |
+| 11 | Assistant | Chat messages | Pipeline-aware AI responses |
+| 12 | AI Review | EAF AI tiers + video | Approved/corrected pairings in `pairings.csv` |
 
-**Active learning loop:** Page 10 → ELAN review → Page 7 re-export → Page 8 retrain.
+**Active learning loop:** Page 10 → Page 12 review (or ELAN) → Page 7 re-export → Page 8 retrain.
 
 ---
 
@@ -257,8 +332,8 @@ MCP tools and orchestrator auto-detect the preset from the checkpoint.
 |--------|-----------|
 | `src/spj/trainer.py` | `LabelEncoder`, `PoseSegmentDataset`, `AugmentedPoseDataset`, `split_dataset()`, `PoseTransformerEncoder`, `TrainingConfig`, `TrainingState`, `train_model()`, `load_checkpoint()`, `list_checkpoints()` |
 | `src/spj/evaluator.py` | `evaluate_model()`, `save_evaluation_report()`, `confusion_matrix_figure()`, `per_class_f1_figure()`, `compare_models_table()` |
-| `src/spj/inference.py` | `predict_segments()`, `write_prepartner-dictns_to_eaf()`, `prepartner-dictns_timeline_figure()` |
-| `src/spj/training_data.py` | `align_pose_to_subtitles()`, `build_alignment_table()`, `import_single_sign_videos()`, `export_segment_npz()`, `export_sign_npz()`, `write_training_config()`, `select_sl_landmarks()`, `SL_LANDMARK_INDICES`, `SL_LANDMARK_PRESETS`, `SL_N_LANDMARKS`, `SL_INPUT_DIM`, `preset_from_input_dim()` |
+| `src/spj/inference.py` | `predict_segments()`, `write_prepartner-dictns_to_eaf()`, `read_prepartner-dictns_from_eaf()`, `prepartner-dictns_timeline_figure()` |
+| `src/spj/training_data.py` | `align_pose_to_subtitles()`, `build_alignment_table()`, `import_single_sign_videos()`, `export_segment_npz()`, `export_sign_npz()`, `write_training_config()`, `select_sl_landmarks()`, `make_pairing_dict()`, `parse_gloss_value()`, `GLOSS_RE`, `harvest_eaf_batch()`, `harvest_eaf_auto()`, `SL_LANDMARK_INDICES`, `SL_LANDMARK_PRESETS`, `SL_N_LANDMARKS`, `SL_INPUT_DIM`, `preset_from_input_dim()` |
 | `src/spj/preannotate.py` | `load_pose_arrays()`, `detect_sign_segments()`, `preannotate_eaf()` |
 | `src/spj/eaf.py` | `load_eaf()`, `save_eaf()`, `create_empty_eaf()`, `add_ai_annotation()`, tier constants |
 | `src/spj/pose.py` | `extract_pose()`, `extract_pose_batch()`, `ensure_models()`, `apple_vision_available()`, `extract_pose_apple()`, `extract_pose_apple_batch()` |

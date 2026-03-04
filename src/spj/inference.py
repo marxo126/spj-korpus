@@ -294,6 +294,71 @@ def predict_batch(
     }
 
 
+def read_prepartner-dictns_from_eaf(eaf_path: Path) -> list[dict]:
+    """Read AI-predicted glosses back from an EAF file.
+
+    Reads AI_Gloss_RH → hand="right", AI_Gloss_LH → hand="left",
+    and matches AI_Confidence annotations by timestamp overlap.
+
+    Args:
+        eaf_path: Path to the .eaf file.
+
+    Returns:
+        List of dicts sorted by start_ms, same schema as predict_segments():
+            {hand, start_ms, end_ms, predicted_gloss, prepartner-dictn_confidence}
+    """
+    from spj.eaf import AI_TIERS, load_eaf
+
+    eaf = load_eaf(eaf_path)
+    tier_names = eaf.get_tier_names()
+
+    # Read confidence annotations into O(1) lookup dict
+    conf_exact: dict[tuple[int, int], float] = {}
+    conf_by_start: dict[int, tuple[int, float]] = {}  # start_ms → (end_ms, value)
+    if AI_TIERS[2] in tier_names:  # "AI_Confidence"
+        for start, end, value, *_ in eaf.get_annotation_data_for_tier(AI_TIERS[2]):
+            try:
+                cv = float(value)
+            except (ValueError, TypeError):
+                cv = 0.0
+            cs, ce = int(start), int(end)
+            conf_exact[(cs, ce)] = cv
+            conf_by_start[cs] = (ce, cv)
+
+    def _find_confidence(start_ms: int, end_ms: int) -> float:
+        """Find confidence — exact match first, then start-time fallback."""
+        exact = conf_exact.get((start_ms, end_ms))
+        if exact is not None:
+            return exact
+        nearby = conf_by_start.get(start_ms)
+        if nearby:
+            return nearby[1]
+        return 0.0
+
+    tier_hand_map = {AI_TIERS[0]: "right", AI_TIERS[1]: "left"}  # AI_Gloss_RH, AI_Gloss_LH
+    prepartner-dictns: list[dict] = []
+
+    for tier, hand in tier_hand_map.items():
+        if tier not in tier_names:
+            continue
+        for start, end, value, *_ in eaf.get_annotation_data_for_tier(tier):
+            gloss = str(value).strip() if value else ""
+            if not gloss:
+                continue
+            start_ms = int(start)
+            end_ms = int(end)
+            prepartner-dictns.append({
+                "hand": hand,
+                "start_ms": start_ms,
+                "end_ms": end_ms,
+                "predicted_gloss": gloss,
+                "prepartner-dictn_confidence": _find_confidence(start_ms, end_ms),
+            })
+
+    prepartner-dictns.sort(key=lambda p: p["start_ms"])
+    return prepartner-dictns
+
+
 def prepartner-dictns_timeline_figure(
     prepartner-dictns: list[dict],
     duration_sec: float,

@@ -137,6 +137,7 @@ def run_retrain_cycle(
         import pandas as pd
         from spj.training_data import (
             load_pairings_csv, export_sign_npz, PST_PAIRED,
+            harvest_eaf_auto,
         )
         from spj.preannotate import load_pose_arrays
         from spj.trainer import (
@@ -149,6 +150,18 @@ def run_retrain_cycle(
         npz_dir = data_dir / "training" / "export"
         splits_dir = data_dir / "training" / "splits"
         models_dir = data_dir / "models"
+
+        # Auto-harvest EAF annotations before counting paired signs
+        try:
+            harvest_result = harvest_eaf_auto(data_dir)
+            if harvest_result and harvest_result["n_new_pairings"] > 0:
+                logger.info(
+                    "EAF harvest: %d new pairings from %d files",
+                    harvest_result["n_new_pairings"],
+                    harvest_result["n_with_annotations"],
+                )
+        except Exception as exc:
+            logger.warning("EAF harvest failed (continuing): %s", exc)
 
         # 1. Load paired signs
         df = load_pairings_csv(pairings_path)

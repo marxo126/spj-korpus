@@ -25,6 +25,7 @@ from spj.training_data import (
     export_sign_npz,
     extract_video_segment,
     filter_quality_labels,
+    harvest_eaf_batch,
     import_single_sign_videos,
     load_alignment_csv,
     load_pairings_csv,
@@ -1046,6 +1047,60 @@ with tab_review:
 # TAB 3 — SIGN-WORD PAIRING
 # ══════════════════════════════════════════════════════════════════════════
 with tab_signword:
+    # ── EAF Harvest ───────────────────────────────────────────────
+    with st.expander("Harvest EAF Annotations", expanded=False):
+        st.markdown(
+            "Bulk-import human-corrected **S1_Gloss_RH** / **S1_Gloss_LH** "
+            "annotations from EAF files into pairings. This closes the "
+            "active learning loop: AI predicts → annotator corrects in ELAN "
+            "→ harvest → retrain."
+        )
+        annotations_dir = DATA_DIR / "annotations"
+        if not annotations_dir.exists():
+            st.warning(f"No annotations directory at `{annotations_dir}`")
+        elif not INVENTORY_CSV.exists():
+            st.warning("Inventory CSV not found. Run the **Inventory** page first.")
+        else:
+            if st.button("Harvest All EAFs", key="btn_harvest_eaf"):
+                inv_df = pd.read_csv(INVENTORY_CSV)
+                glossary = None
+                if GLOSSARY_JSON.exists():
+                    glossary = load_glossary(GLOSSARY_JSON)
+
+                prog = st.progress(0.0, text="Scanning EAF files...")
+
+                def _harvest_progress(current: int, total: int) -> None:
+                    prog.progress(
+                        current / max(total, 1),
+                        text=f"Scanning EAF {current}/{total}...",
+                    )
+
+                result = harvest_eaf_batch(
+                    annotations_dir=annotations_dir,
+                    pose_dir=POSE_DIR,
+                    inventory_df=inv_df,
+                    pairings_path=PAIRINGS_CSV,
+                    glossary=glossary,
+                    progress_callback=_harvest_progress,
+                )
+                prog.empty()
+
+                c1, c2, c3, c4 = st.columns(4)
+                c1.metric("Files scanned", result["n_files_scanned"])
+                c2.metric("With annotations", result["n_with_annotations"])
+                c3.metric("New pairings", result["n_new_pairings"])
+                c4.metric("Dupes skipped", result["n_skipped_dupes"])
+
+                if result["n_new_pairings"] > 0:
+                    st.success(f"Added {result['n_new_pairings']} new pairings!")
+                    # Invalidate cached pairings
+                    st.session_state.pop("td_pairings_df", None)
+                elif result["n_with_annotations"] == 0:
+                    st.info("No EAF files have human S1_Gloss annotations yet.")
+                else:
+                    st.info("All annotations already in pairings (0 new).")
+
+    # ── Original Sign-Word tab content ────────────────────────────
     df = st.session_state.get("td_align_df")
 
     if df is None or df.empty:

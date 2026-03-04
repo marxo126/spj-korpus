@@ -759,6 +759,34 @@ def spj_find_corrupted_poses() -> dict:
         return {"status": "error", "message": str(exc)}
 
 
+@mcp.tool()
+def spj_harvest_eaf() -> dict:
+    """Bulk-harvest human S1_Gloss_RH / S1_Gloss_LH annotations from EAF files.
+
+    Reads all .eaf files in data/annotations/, extracts human-corrected gloss
+    annotations, and writes them as paired rows in pairings.csv.
+    Deduplicates against existing pairings automatically.
+
+    Returns counts of files scanned, files with annotations, new pairings added,
+    and duplicates skipped.
+    """
+    try:
+        from spj.training_data import harvest_eaf_auto
+
+        result = harvest_eaf_auto(DATA_DIR)
+        if result is None:
+            return {
+                "status": "ok",
+                "message": "Missing annotations dir or inventory.csv",
+                "n_files_scanned": 0, "n_with_annotations": 0,
+                "n_new_pairings": 0, "n_skipped_dupes": 0,
+            }
+        return {"status": "ok", **result}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
