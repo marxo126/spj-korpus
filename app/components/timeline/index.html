@@ -38,10 +38,9 @@ video { background: #000; border-radius: 6px; flex: 1; min-width: 0; max-width: 
 // Implements the postMessage protocol that Streamlit's iframe host expects.
 // Based on streamlit-component-lib@2.0.0/dist/streamlit.js
 (function() {
+  var _lastHeight = -1;
   function sendBackMsg(type, data) {
-    var msg = {isStreamlitMessage: true, type: type};
-    if (data) { for (var k in data) { if (data.hasOwnProperty(k)) msg[k] = data[k]; } }
-    window.parent.postMessage(msg, "*");
+    window.parent.postMessage(Object.assign({isStreamlitMessage: true, type: type}, data), "*");
   }
   var Streamlit = {
     RENDER_EVENT: "streamlit:render",
@@ -54,6 +53,8 @@ video { background: #000; border-radius: 6px; flex: 1; min-width: 0; max-width: 
     },
     setFrameHeight: function(height) {
       if (height === undefined) height = document.body.scrollHeight;
+      if (height === _lastHeight) return;
+      _lastHeight = height;
       sendBackMsg("streamlit:setFrameHeight", {height: height});
     }
   };
