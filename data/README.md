@@ -50,6 +50,6 @@ data/
 
 For research collaboration or data access requests, contact:
 
-**Marek Kanas** — [InnoSign](https://www.innosign.eu)
+**Marek Kanas** — deaf developer, Slovakia
 
 Data sharing is subject to partner organization agreements and GDPR compliance.

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import Optional
@@ -234,6 +235,65 @@ def select_sl_landmarks(
         pose = pose[:, 0, :, :]
 
     return pose[:, indices, :]
+
+
+# ---------------------------------------------------------------------------
+# Label normalization and quality filtering
+# ---------------------------------------------------------------------------
+
+def normalize_label(label: str) -> str:
+    """Normalize a training label: lowercase + strip trailing variant suffixes.
+
+    Examples:
+        "Voda_1" -> "voda"
+        "HOUSE_3" -> "house"
+        "čokoláda" -> "čokoláda"
+
+    Distinct from glossary.normalize_word() which also strips punctuation.
+    """
+    if pd.isna(label):
+        return ""
+    s = str(label).strip().lower()
+    # Strip trailing _N variant suffixes (e.g. "_1", "_23")
+    s = re.sub(r'_\d+$', '', s)
+    return s
+
+
+def filter_quality_labels(
+    manifest_df: pd.DataFrame,
+    min_samples: int = 3,
+    normalize: bool = True,
+) -> pd.DataFrame:
+    """Filter manifest to labels with at least min_samples occurrences.
+
+    Args:
+        manifest_df: DataFrame with training segments (from manifest.csv).
+        min_samples: Minimum samples per label to keep (default 3).
+        normalize: Apply normalize_label() (default True).
+
+    Returns:
+        Filtered DataFrame with 'label' and 'label_original' columns.
+    """
+    df = manifest_df.copy()
+
+    # Derive label column defensively (lesson #5)
+    if "label" not in df.columns:
+        rt = df.get("reviewed_text", pd.Series(dtype=str))
+        tx = df.get("text", pd.Series(dtype=str))
+        df["label"] = rt.where(rt.str.strip() != "", tx)
+
+    df["label_original"] = df["label"]
+
+    if normalize:
+        df["label"] = df["label"].apply(normalize_label)
+
+    # Remove empty/NaN labels, then filter by min sample count (single mask)
+    mask = df["label"].notna() & (df["label"].str.strip() != "")
+    df = df[mask]
+
+    label_counts = df["label"].value_counts()
+    valid_labels = label_counts[label_counts >= min_samples].index
+    return df[df["label"].isin(valid_labels)].copy()
 
 
 # ---------------------------------------------------------------------------
@@ -495,7 +555,7 @@ def build_alignment_table(
 
 
 # ---------------------------------------------------------------------------
-# Single-sign video import (SpreadTheSign / glossed clips)
+# Single-sign video import (dictionary / glossed clips)
 # ---------------------------------------------------------------------------
 
 def import_single_sign_videos(

@@ -88,6 +88,24 @@ if _zero_byte:
         + ("…" if len(_zero_byte) > 5 else "")
     )
 
+# Check for corrupted (too-small) pose files — cached to avoid re-scanning on every rerun
+from spj.pose import find_corrupted_poses
+if "corrupted_poses" not in st.session_state:
+    st.session_state["corrupted_poses"] = find_corrupted_poses(POSE_DIR, min_bytes=10_000)
+_corrupted = st.session_state["corrupted_poses"]
+# Exclude 0-byte files (already shown above)
+_corrupted_nonzero = [c for c in _corrupted if c["size_bytes"] > 0]
+if _corrupted_nonzero:
+    with st.expander(f"⚠️ {len(_corrupted_nonzero)} potentially corrupted pose file(s) (< 10 KB)", expanded=False):
+        st.caption(
+            "These files are very small and may contain failed or partial extractions. "
+            "Consider re-extracting them."
+        )
+        st.dataframe(
+            pd.DataFrame(_corrupted_nonzero)[["filename", "size_bytes"]],
+            hide_index=True, use_container_width=True,
+        )
+
 # Completion message stored by the extraction loop (shown once after rerun)
 if "pose_completion_msg" in st.session_state:
     msg    = st.session_state.pop("pose_completion_msg")

@@ -536,8 +536,11 @@ with tab_train:
                 st.error(f"Training error: {state.error}")
 
             elif state.finished:
+                extra = ""
+                if state.early_stopped:
+                    extra = f" (early stopped at epoch {state.epoch})"
                 st.success(
-                    f"Training complete! Best val accuracy: **{state.best_val_acc:.2%}** "
+                    f"Training complete{extra}! Best val accuracy: **{state.best_val_acc:.2%}** "
                     f"at epoch {state.best_epoch}\n\n"
                     f"Checkpoint: `{state.checkpoint_path}`"
                 )
@@ -554,6 +557,8 @@ with tab_train:
                     state.epoch / max(1, state.total_epochs),
                     text=f"Epoch {state.epoch} / {state.total_epochs}",
                 )
+                if state.phase_description:
+                    st.caption(state.phase_description)
                 if st.button("Stop training", type="secondary"):
                     state.stop_requested = True
                     st.info("Stop requested — will finish current epoch.")
@@ -600,13 +605,19 @@ with tab_train:
             # -- Idle — configuration UI --
             st.subheader("Model configuration")
 
-            # Backbone selection — now includes pretrained option
+            # Backbone selection — includes pretrained and category transfer options
             from spj.ssl_pretrain import list_pretrain_checkpoints
+            from spj.trainer import find_category_checkpoints, TRANSFER_DEFAULTS
             pt_ckpts = list_pretrain_checkpoints(MODELS_DIR)
 
+            # Detect category checkpoints suitable for transfer learning
+            cat_ckpts = find_category_checkpoints(MODELS_DIR)
+
             backbone_options = ["From scratch (Transformer)"]
+            if cat_ckpts:
+                backbone_options.insert(0, "Category Transfer (Best)")
             if pt_ckpts:
-                backbone_options.insert(0, "Pretrained (SSL)")
+                backbone_options.append("Pretrained (SSL)")
             backbone_options.extend(["SignBERT", "OpenHands"])
 
             backbone = st.selectbox(
@@ -614,8 +625,10 @@ with tab_train:
                 backbone_options,
                 index=0,
                 help=(
-                    "**Pretrained (SSL)**: Initialize from self-supervised pretrained weights.\n\n"
+                    "**Category Transfer (Best)**: Two-phase fine-tuning from a category model encoder "
+                    "(freeze → unfreeze). Best results so far (+48% over baseline).\n\n"
                     "**From scratch**: PoseTransformerEncoder trained on your data only.\n\n"
+                    "**Pretrained (SSL)**: Initialize from self-supervised pretrained weights.\n\n"
                     "**SignBERT / OpenHands**: Attempts to load external pretrained checkpoint."
                 ),
                 key="tr_backbone",
@@ -636,8 +649,25 @@ with tab_train:
                     next(c["path"] for c in pt_ckpts if c["filename"] == selected_pt)
                 )
 
+            # Category transfer checkpoint selection
+            cat_transfer_path = None
+            if backbone == "Category Transfer (Best)" and cat_ckpts:
+                # Already sorted best-first from find_category_checkpoints()
+                _cat_by_name = {c["filename"]: c for c in cat_ckpts}
+                selected_cat = st.selectbox(
+                    "Category checkpoint (encoder source)",
+                    [c["filename"] for c in cat_ckpts],
+                    format_func=lambda f: (
+                        f"{f} — {_cat_by_name[f]['n_classes']} classes, "
+                        f"acc: {_cat_by_name[f]['val_acc']:.2%}"
+                    ),
+                    key="tr_cat_ckpt",
+                )
+                cat_transfer_path = Path(_cat_by_name[selected_cat]["path"])
+
             backbone_key_map = {
                 "From scratch (Transformer)": "from_scratch",
+                "Category Transfer (Best)": "category_transfer",
                 "Pretrained (SSL)": "pretrained_ssl",
                 "SignBERT": "signbert",
                 "OpenHands": "openhands",
@@ -655,6 +685,36 @@ with tab_train:
                 d_ff = hc1.number_input("d_ff", 64, 4096, 512, step=64, key="tr_dff")
                 dropout = hc2.number_input("Dropout", 0.0, 0.5, 0.1, step=0.05, key="tr_dropout")
                 max_seq_len = hc1.number_input("Max seq len", 50, 1000, 300, step=50, key="tr_maxseq")
+                weight_decay = hc2.number_input("Weight decay", 0.0, 0.1, 1e-4, format="%.1e", key="tr_wd")
+
+                st.divider()
+                st.markdown("**Transfer learning**")
+                tc1, tc2 = st.columns(2)
+                _is_transfer = backbone in ("Category Transfer (Best)", "Pretrained (SSL)")
+                _td = TRANSFER_DEFAULTS
+                freeze_epochs = tc1.number_input(
+                    "Freeze epochs (Phase 1)", 0, 100,
+                    _td["freeze_epochs"] if _is_transfer else 0,
+                    key="tr_freeze",
+                    help="Phase 1: train only classifier with frozen encoder",
+                )
+                unfreeze_lr = tc2.number_input(
+                    "Unfreeze LR (Phase 2)", 1e-6, 1e-1,
+                    _td["unfreeze_lr"] if _is_transfer else lr,
+                    format="%.1e", key="tr_unfreeze_lr",
+                    help="Learning rate after unfreezing all parameters",
+                )
+                patience_val = tc1.number_input(
+                    "Early stopping patience", 0, 100,
+                    _td["patience"] if _is_transfer else 0,
+                    key="tr_patience",
+                    help="Stop if no improvement for N epochs (0 = disabled)",
+                )
+                label_smoothing = tc2.number_input(
+                    "Label smoothing", 0.0, 0.3,
+                    _td["label_smoothing"] if _is_transfer else 0.0,
+                    step=0.05, key="tr_label_smooth",
+                )
 
             st.caption(
                 f"Training: **{len(train_df)}** samples, "
@@ -694,6 +754,11 @@ with tab_train:
                     n_layers=n_layers,
                     dropout=dropout,
                     max_seq_len=max_seq_len,
+                    weight_decay=weight_decay,
+                    freeze_epochs=freeze_epochs,
+                    unfreeze_lr=unfreeze_lr,
+                    patience=patience_val,
+                    label_smoothing=label_smoothing,
                 )
 
                 state = TrainingState()
@@ -705,10 +770,12 @@ with tab_train:
                         f"training from scratch with Transformer architecture."
                     )
 
+                _pretrained = cat_transfer_path or pretrained_path
+
                 thread = threading.Thread(
                     target=train_model,
                     args=(train_df, val_df, EXPORT_DIR, label_encoder, config, state, MODELS_DIR),
-                    kwargs={"pretrained_path": pretrained_path},
+                    kwargs={"pretrained_path": _pretrained},
                     daemon=True,
                 )
                 thread.start()

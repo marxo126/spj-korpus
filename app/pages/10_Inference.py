@@ -123,7 +123,24 @@ with tab_predict:
 
                 if not selected_videos:
                     st.info("Select at least one video to run inference.")
-                elif st.button("▶ Run Inference", type="primary"):
+
+                bc1, bc2 = st.columns(2)
+                run_selected = bc1.button(
+                    "▶ Run Inference",
+                    type="primary",
+                    disabled=not selected_videos,
+                )
+                run_batch = bc2.button(
+                    f"▶ Batch All ({len(pose_ready)})",
+                    type="secondary",
+                )
+
+                if run_selected or run_batch:
+                    if run_batch:
+                        target_stems = pose_ready["stem"].tolist()
+                    else:
+                        target_stems = selected_videos
+
                     from spj.trainer import load_checkpoint
                     from spj.preannotate import load_pose_arrays, detect_sign_segments
                     from spj.inference import predict_segments, write_predictions_to_eaf
@@ -146,13 +163,16 @@ with tab_predict:
                     all_results = []
                     progress = st.progress(0.0, text="Running inference…")
 
-                    for i, stem in enumerate(selected_videos):
+                    # Build O(1) lookup to avoid O(N^2) DataFrame scan per video
+                    _stem_rows = {r["stem"]: r for _, r in pose_ready.iterrows()}
+
+                    for i, stem in enumerate(target_stems):
                         progress.progress(
-                            (i + 1) / len(selected_videos),
-                            text=f"Processing {stem}…",
+                            (i + 1) / len(target_stems),
+                            text=f"Processing {stem}… ({i + 1}/{len(target_stems)})",
                         )
 
-                        video_row = pose_ready[pose_ready["stem"] == stem].iloc[0]
+                        video_row = _stem_rows[stem]
                         video_path = Path(str(video_row["path"]))
                         pose_path = POSE_DIR / f"{stem}.pose"
                         eaf_path = ANNOTATIONS_DIR / f"{stem}.eaf"
@@ -233,14 +253,21 @@ with tab_predict:
                     total_preds = sum(r["n_segments"] for r in all_results)
 
                     st.success(
-                        f"Processed **{ok_count}/{len(selected_videos)}** videos, "
+                        f"Processed **{ok_count}/{len(target_stems)}** videos, "
                         f"**{total_preds}** total predictions written to EAF.\n\n"
                         f"Open the EAF files in **ELAN** to review AI predictions. "
                         f"Corrections flow back to training data via page 7."
                     )
 
+                    if run_batch:
+                        mc1, mc2, mc3, mc4 = st.columns(4)
+                        mc1.metric("Processed", ok_count)
+                        mc2.metric("Skipped", sum(1 for r in all_results if r["status"] not in ("OK",) and not r["status"].startswith("Error")))
+                        mc3.metric("Errors", sum(1 for r in all_results if r["status"].startswith("Error")))
+                        mc4.metric("Predictions", total_preds)
+
                     st.session_state["inf_results"] = all_results
-                    st.session_state["inf_selected"] = selected_videos
+                    st.session_state["inf_selected"] = target_stems
 
 
 # ══════════════════════════════════════════════════════════════════════════

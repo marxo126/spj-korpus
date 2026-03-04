@@ -425,6 +425,10 @@ class TrainingConfig:
     max_seq_len: int = 300
     weight_decay: float = 1e-4
     device: str = "mps"
+    freeze_epochs: int = 0          # Phase 1 frozen epochs (0 = no freeze)
+    unfreeze_lr: float = 3e-4       # Phase 2 learning rate
+    patience: int = 0               # early stopping patience (0 = disabled)
+    label_smoothing: float = 0.0    # cross-entropy label smoothing
 
 
 @dataclass
@@ -446,6 +450,9 @@ class TrainingState:
     error: str = ""
     checkpoint_path: str = ""
     stop_requested: bool = False
+    phase: int = 1
+    phase_description: str = ""
+    early_stopped: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -555,14 +562,24 @@ def train_model(
         )
         if pretrained_path:
             _load_pretrained_weights(model, pretrained_path)
+
+        # Two-phase transfer: freeze encoder if freeze_epochs > 0
+        if config.freeze_epochs > 0:
+            for name, param in model.named_parameters():
+                if "classifier" not in name:
+                    param.requires_grad = False
+            state.phase = 1
+            state.phase_description = f"Phase 1: Frozen encoder (epochs 1-{config.freeze_epochs})"
+            logger.info("Phase 1: Frozen encoder, training classifier only")
+
         model = model.to(device)
 
         optimizer = torch.optim.AdamW(
-            model.parameters(),
+            [p for p in model.parameters() if p.requires_grad],
             lr=config.lr,
             weight_decay=config.weight_decay,
         )
-        criterion = nn.CrossEntropyLoss()
+        criterion = nn.CrossEntropyLoss(label_smoothing=config.label_smoothing)
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=config.epochs,
         )
@@ -575,6 +592,22 @@ def train_model(
             if state.stop_requested:
                 logger.info("Training stopped by user at epoch %d", epoch)
                 break
+
+            # Phase transition: unfreeze at freeze_epochs + 1
+            if config.freeze_epochs > 0 and epoch == config.freeze_epochs + 1:
+                for param in model.parameters():
+                    param.requires_grad = True
+                optimizer = torch.optim.AdamW(
+                    model.parameters(),
+                    lr=config.unfreeze_lr,
+                    weight_decay=config.weight_decay,
+                )
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer, T_max=config.epochs - config.freeze_epochs,
+                )
+                state.phase = 2
+                state.phase_description = f"Phase 2: All params unfrozen (lr={config.unfreeze_lr})"
+                logger.info("Phase 2: Unfrozen all params, lr=%s", config.unfreeze_lr)
 
             state.epoch = epoch
 
@@ -660,6 +693,15 @@ def train_model(
                 "Epoch %d/%d — train_loss=%.4f train_acc=%.4f val_loss=%.4f val_acc=%.4f",
                 epoch, config.epochs, train_loss, train_acc, val_loss, val_acc,
             )
+
+            # Early stopping
+            if config.patience > 0:
+                epochs_since_improvement = epoch - state.best_epoch
+                if epochs_since_improvement >= config.patience:
+                    state.early_stopped = True
+                    logger.info("Early stopping at epoch %d (no improvement for %d epochs)",
+                                epoch, config.patience)
+                    break
 
         state.finished = True
         state.running = False
@@ -768,3 +810,31 @@ def list_checkpoints(models_dir: Path) -> list[dict]:
         except Exception as exc:
             logger.warning("Cannot read checkpoint %s: %s", pt_file, exc)
     return checkpoints
+
+
+# Recommended defaults for category→word transfer learning
+TRANSFER_DEFAULTS = {
+    "freeze_epochs": 10,
+    "unfreeze_lr": 3e-4,
+    "patience": 25,
+    "label_smoothing": 0.1,
+}
+
+# Minimum val_acc for a category checkpoint to be considered for transfer
+_CAT_CKPT_MIN_ACC = 0.3
+
+
+def find_category_checkpoints(
+    models_dir: Path, min_val_acc: float = _CAT_CKPT_MIN_ACC,
+) -> list[dict]:
+    """Find category model checkpoints suitable for transfer learning.
+
+    Looks for cat*.pt files with val_acc above the threshold.
+    Returns sorted by val_acc descending (best first).
+    """
+    all_ckpts = list_checkpoints(models_dir)
+    cats = [
+        c for c in all_ckpts
+        if c["filename"].startswith("cat") and c.get("val_acc", 0) > min_val_acc
+    ]
+    return sorted(cats, key=lambda c: c.get("val_acc", 0), reverse=True)

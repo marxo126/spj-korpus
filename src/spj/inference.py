@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 import torch
@@ -170,6 +170,128 @@ def write_predictions_to_eaf(
 
     save_eaf(eaf, eaf_path)
     return {"rh_predictions": rh_count, "lh_predictions": lh_count}
+
+
+def predict_batch(
+    model: "PoseTransformerEncoder",
+    label_encoder: "LabelEncoder",
+    pose_dir: Path,
+    annotations_dir: Path,
+    inventory_df: "pd.DataFrame",
+    max_seq_len: int = 300,
+    device: "Optional[torch.device]" = None,
+    landmark_indices: "Optional[list[int]]" = None,
+    min_pose_bytes: int = 10_000,
+    progress_callback: "Optional[Callable[[int, int, str], None]]" = None,
+) -> dict:
+    """Run inference on all videos in the inventory.
+
+    Args:
+        model: Trained PoseTransformerEncoder in eval mode.
+        label_encoder: Maps indices to gloss labels.
+        pose_dir: Directory containing .pose files.
+        annotations_dir: Directory for EAF output files.
+        inventory_df: Inventory DataFrame with 'path' column.
+        max_seq_len: Maximum sequence length the model expects.
+        device: Torch device (inferred from model if None).
+        landmark_indices: Landmark filter indices for SL-relevant subset.
+        min_pose_bytes: Skip pose files smaller than this (corrupted).
+        progress_callback: Called as progress_callback(idx, total, video_name).
+
+    Returns:
+        Dict with n_processed, n_skipped, n_errors, total_predictions, results.
+    """
+    import pandas as pd
+    from spj.preannotate import load_pose_arrays, detect_sign_segments
+    from spj.eaf import create_empty_eaf, save_eaf
+
+    pose_dir = Path(pose_dir)
+    annotations_dir = Path(annotations_dir)
+    annotations_dir.mkdir(parents=True, exist_ok=True)
+
+    results = []
+    n_processed = 0
+    n_skipped = 0
+    n_errors = 0
+    total_predictions = 0
+    total = len(inventory_df)
+
+    for idx, (_, row) in enumerate(inventory_df.iterrows()):
+        video_path = Path(str(row["path"]))
+        stem = video_path.stem
+        pose_path = pose_dir / f"{stem}.pose"
+
+        if progress_callback:
+            progress_callback(idx, total, stem)
+
+        # Skip if no pose file
+        if not pose_path.exists():
+            results.append({"video": stem, "status": "skipped", "reason": "No pose file"})
+            n_skipped += 1
+            continue
+
+        # Skip corrupted (small) pose files
+        try:
+            pose_size = pose_path.stat().st_size
+        except OSError:
+            results.append({"video": stem, "status": "skipped", "reason": "Cannot stat pose file"})
+            n_skipped += 1
+            continue
+
+        if pose_size < min_pose_bytes:
+            results.append({
+                "video": stem, "status": "skipped",
+                "reason": f"Pose file too small ({pose_size} bytes)",
+            })
+            n_skipped += 1
+            continue
+
+        try:
+            pose_data, conf_data, fps = load_pose_arrays(pose_path)
+            segments = detect_sign_segments(pose_data, conf_data, fps)
+            n_segs = len(segments.get("right", [])) + len(segments.get("left", []))
+
+            if n_segs == 0:
+                results.append({"video": stem, "status": "ok", "n_predictions": 0})
+                n_processed += 1
+                continue
+
+            predictions = predict_segments(
+                model, label_encoder, segments, pose_data, fps,
+                max_seq_len=max_seq_len, device=device,
+                landmark_indices=landmark_indices,
+            )
+
+            # Ensure EAF exists
+            eaf_path = annotations_dir / f"{stem}.eaf"
+            if not eaf_path.exists():
+                eaf = create_empty_eaf(video_path, eaf_path)
+                save_eaf(eaf, eaf_path)
+
+            write_result = write_predictions_to_eaf(predictions, eaf_path, overwrite=True)
+
+            results.append({
+                "video": stem,
+                "status": "ok",
+                "n_predictions": len(predictions),
+                "rh": write_result.get("rh_predictions", 0),
+                "lh": write_result.get("lh_predictions", 0),
+            })
+            total_predictions += len(predictions)
+            n_processed += 1
+
+        except Exception as exc:
+            logger.warning("Inference failed for %s: %s", stem, exc)
+            results.append({"video": stem, "status": "error", "message": str(exc)})
+            n_errors += 1
+
+    return {
+        "n_processed": n_processed,
+        "n_skipped": n_skipped,
+        "n_errors": n_errors,
+        "total_predictions": total_predictions,
+        "results": results,
+    }
 
 
 def predictions_timeline_figure(

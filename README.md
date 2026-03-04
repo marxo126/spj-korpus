@@ -67,8 +67,7 @@ Video → MediaPipe Pose → .pose files → EAF Pre-annotation
 | `glossary.py` | SPJ glossary management with ID-glosses |
 | `orchestrator.py` | Active learning orchestrator (milestone-based retraining) |
 | `mcp_server.py` | MCP server exposing 12 pipeline tools |
-| `spreadthesign.py` | reference dictionary dictionary download |
-| `downloader.py` | Video download with subtitle extraction |
+| `downloader.py` | Multi-source video download (YouTube, dictionary CSV, FTP, HTTP) |
 
 ---
 
@@ -252,6 +251,5 @@ You are free to share and adapt this work for non-commercial purposes, with attr
 ## Author
 
 **Marek Kanas** — deaf developer, Slovakia
-[InnoSign](https://www.innosign.eu)
 
 Built with [Claude Code](https://claude.ai/claude-code) by Anthropic.
