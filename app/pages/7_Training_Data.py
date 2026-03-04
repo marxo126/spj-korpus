@@ -24,9 +24,11 @@ from spj.training_data import (
     export_segment_npz,
     export_sign_npz,
     extract_video_segment,
+    filter_quality_labels,
     import_single_sign_videos,
     load_alignment_csv,
     load_pairings_csv,
+    normalize_label,
     pose_animation_html,
     pose_frame_figure,
     save_alignment_csv,
@@ -177,7 +179,7 @@ with st.expander("ℹ️ How to use this page", expanded=False):
     st.markdown("""
 **Needs:**
 - Pose files (page 2 — Pose Extraction)
-- Subtitle `.vtt` files (page 6) **OR** glossed single-sign video clips (e.g. intl-vocab)
+- Subtitle `.vtt` files (page 6) **OR** glossed single-sign video clips (partner-dictnary videos)
 
 **Steps:**
 
@@ -355,7 +357,7 @@ with tab_align:
                     st.success(f"Alignment saved to `{ALIGNMENT_CSV}`")
 
     # ------------------------------------------------------------------
-    # Import glossed single-sign videos (intl-vocab, etc.)
+    # Import glossed single-sign videos (partner-dictnary clips, etc.)
     # ------------------------------------------------------------------
     st.divider()
     st.subheader("Import glossed videos (no subtitles needed)")
@@ -1546,6 +1548,43 @@ with tab_export:
             )
             out_dir = Path(out_dir_str)
 
+            # Label quality filter
+            with st.expander("Label quality filter", expanded=False):
+                st.caption(
+                    "Filter labels by minimum sample count. "
+                    "Useful for training — labels with too few samples can't be learned."
+                )
+                fq1, fq2 = st.columns(2)
+                do_normalize = fq1.checkbox(
+                    "Normalize labels (lowercase, strip _N suffixes)",
+                    value=True, key="td_normalize_labels",
+                )
+                min_samples = fq2.number_input(
+                    "Min samples per label", 1, 100, 3,
+                    key="td_min_samples",
+                    help="Labels with fewer samples will be excluded",
+                )
+
+                # Preview filter effect
+                if approved_df is not None and not approved_df.empty:
+                    preview_df = approved_df.copy()
+                    # Derive label column for preview
+                    if "label" not in preview_df.columns:
+                        preview_df["label"] = preview_df["reviewed_text"].where(
+                            preview_df["reviewed_text"].str.strip() != "",
+                            preview_df["text"],
+                        )
+                    if do_normalize:
+                        preview_df["label"] = preview_df["label"].apply(normalize_label)
+                    preview_df = preview_df[preview_df["label"].str.strip() != ""]
+                    preview_df = preview_df[~preview_df["label"].isna()]
+                    label_counts = preview_df["label"].value_counts()
+                    valid = label_counts[label_counts >= min_samples]
+                    fc1, fc2, fc3 = st.columns(3)
+                    fc1.metric("Labels before", len(label_counts))
+                    fc2.metric("Labels after", len(valid))
+                    fc3.metric("Segments after", int(valid.sum()))
+
             if export_mode == "Sentence-level (subtitle segments)":
                 # ── Sentence-level export (original) ──────────────
                 col_e1, col_e2 = st.columns(2)
@@ -1608,6 +1647,20 @@ with tab_export:
                             manifest["reviewed_text"].str.strip() != "",
                             manifest["text"],
                         )
+
+                        # Apply quality filter if configured
+                        if min_samples > 1:
+                            before_count = len(manifest)
+                            manifest = filter_quality_labels(
+                                manifest,
+                                min_samples=min_samples,
+                                normalize=do_normalize,
+                            )
+                            st.info(
+                                f"Quality filter: {before_count} → {len(manifest)} segments "
+                                f"({len(manifest['label'].unique())} labels with {min_samples}+ samples)"
+                            )
+
                         manifest_path = out_dir / "manifest.csv"
                         manifest.to_csv(manifest_path, index=False)
                         st.success(f"Manifest saved: `{manifest_path}`")

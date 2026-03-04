@@ -127,6 +127,7 @@ def check_retrain_status(
 def run_retrain_cycle(
     data_dir: Path,
     config_overrides: Optional[dict] = None,
+    transfer_from: Optional[str] = None,
 ) -> OrchestrationReport:
     """Full retrain cycle: export signs → split → train → evaluate.
 
@@ -194,12 +195,20 @@ def run_retrain_cycle(
         manifest_df = pd.DataFrame(manifest_rows)
         manifest_df.to_csv(npz_dir / "manifest.csv", index=False)
 
-        # 4. Split dataset
+        # 4. Apply quality filtering and split
+        from spj.training_data import filter_quality_labels
+        manifest_df = filter_quality_labels(manifest_df, min_samples=3)
+        if manifest_df.empty:
+            return OrchestrationReport(
+                paired_signs=n_paired,
+                error="No labels with 3+ samples after quality filtering",
+            )
+
         train_df, val_df, test_df = split_dataset(
             manifest_df, output_dir=splits_dir,
         )
 
-        # 5. Build label encoder and config
+        # Build label encoder from filtered labels
         labels = manifest_df["label"].tolist()
         label_encoder = LabelEncoder(labels)
 
@@ -209,11 +218,34 @@ def run_retrain_cycle(
                 if hasattr(config, k):
                     setattr(config, k, v)
 
+        # 5. Auto-detect category model for transfer
+        from spj.trainer import find_category_checkpoints, TRANSFER_DEFAULTS
+        pretrained = None
+        if transfer_from:
+            p = Path(transfer_from)
+            if not p.is_absolute():
+                p = models_dir / transfer_from
+            if p.exists():
+                pretrained = p
+        elif transfer_from is None:
+            # Auto-detect: best category checkpoint
+            cat_candidates = find_category_checkpoints(models_dir)
+            if cat_candidates:
+                best_cat = cat_candidates[0]  # already sorted best-first
+                pretrained = Path(best_cat["path"])
+                logger.info("Auto-detected category model: %s (val_acc=%.3f)",
+                            best_cat["filename"], best_cat["val_acc"])
+
+        # Set transfer-optimized config if using a pretrained model
+        if pretrained and config.freeze_epochs == 0:
+            for k, v in TRANSFER_DEFAULTS.items():
+                setattr(config, k, v)
+
         # 6. Train (synchronous)
         state = TrainingState()
         train_model(
             train_df, val_df, npz_dir, label_encoder,
-            config, state, models_dir,
+            config, state, models_dir, pretrained_path=pretrained,
         )
 
         if state.error:

@@ -489,6 +489,42 @@ def extract_pose_batch(
     return results
 
 
+def find_corrupted_poses(
+    pose_dir: Path,
+    min_bytes: int = 10_000,
+) -> list[dict]:
+    """Scan pose directory for files smaller than threshold (likely corrupted).
+
+    Args:
+        pose_dir: Directory containing .pose files.
+        min_bytes: Files smaller than this are flagged (default 10KB).
+
+    Returns:
+        List of dicts: [{filename, path, size_bytes}, ...]
+    """
+    pose_dir = Path(pose_dir)
+    if not pose_dir.exists():
+        return []
+
+    corrupted = []
+    for f in sorted(pose_dir.glob("*.pose")):
+        try:
+            size = f.stat().st_size
+            if size < min_bytes:
+                corrupted.append({
+                    "filename": f.name,
+                    "path": str(f),
+                    "size_bytes": size,
+                })
+        except OSError:
+            corrupted.append({
+                "filename": f.name,
+                "path": str(f),
+                "size_bytes": -1,
+            })
+    return corrupted
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------

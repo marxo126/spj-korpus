@@ -431,6 +431,11 @@ def spj_train_model(
     epochs: int = 50,
     lr: float = 1e-3,
     backbone: str = "from_scratch",
+    transfer_from: str = "",
+    min_samples: int = 1,
+    freeze_epochs: int = 0,
+    patience: int = 0,
+    label_smoothing: float = 0.0,
 ) -> dict:
     """Train a PoseTransformerEncoder on exported training data.
 
@@ -441,6 +446,11 @@ def spj_train_model(
         epochs: Number of training epochs (default 50).
         lr: Learning rate (default 0.001).
         backbone: "from_scratch" or path to pretrained checkpoint.
+        transfer_from: Checkpoint filename for encoder transfer (e.g. "cat_v2_ep55_acc0.4493.pt").
+        min_samples: Minimum samples per label to keep (default 1 = no filtering).
+        freeze_epochs: Phase 1 frozen epochs for transfer learning (default 0).
+        patience: Early stopping patience (default 0 = disabled).
+        label_smoothing: Cross-entropy label smoothing (default 0.0).
     """
     try:
         import pandas as pd
@@ -464,12 +474,11 @@ def spj_train_model(
         if manifest_df.empty:
             return {"status": "error", "message": "Manifest is empty"}
 
-        # Derive label column
-        if "label" not in manifest_df.columns:
-            manifest_df["label"] = manifest_df["reviewed_text"].where(
-                manifest_df["reviewed_text"].str.strip() != "",
-                manifest_df["text"],
-            )
+        # Apply quality filtering (also handles label column derivation)
+        from spj.training_data import filter_quality_labels
+        manifest_df = filter_quality_labels(manifest_df, min_samples=max(min_samples, 1))
+        if manifest_df.empty:
+            return {"status": "error", "message": f"No labels with {min_samples}+ samples"}
 
         labels = manifest_df["label"].tolist()
         label_encoder = LabelEncoder(labels)
@@ -482,15 +491,25 @@ def spj_train_model(
             epochs=epochs,
             lr=lr,
             backbone=backbone,
+            freeze_epochs=freeze_epochs,
+            patience=patience,
+            label_smoothing=label_smoothing,
         )
 
-        state = TrainingState()
+        # Handle transfer_from (explicit encoder transfer)
         pretrained = None
-        if backbone != "from_scratch":
+        if transfer_from:
+            p = Path(transfer_from)
+            if not p.is_absolute():
+                p = DATA_DIR / "models" / transfer_from
+            if p.exists():
+                pretrained = p
+        elif backbone != "from_scratch":
             p = Path(backbone)
             if p.exists():
                 pretrained = p
 
+        state = TrainingState()
         train_model(
             train_df, val_df, npz_dir, label_encoder,
             config, state, models_dir, pretrained_path=pretrained,
@@ -709,6 +728,32 @@ def spj_orchestrate(action: str = "check") -> dict:
 
         else:
             return {"status": "error", "message": f"Unknown action: {action}. Use check/retrain/inference."}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+# ---------------------------------------------------------------------------
+# Tool: Find corrupted pose files
+# ---------------------------------------------------------------------------
+
+@mcp.tool()
+def spj_find_corrupted_poses() -> dict:
+    """Find potentially corrupted pose files (< 10 KB).
+
+    Returns count and list of files smaller than 10 KB in the pose directory.
+    """
+    try:
+        from spj.pose import find_corrupted_poses
+
+        pose_dir = DATA_DIR / "pose"
+        corrupted = find_corrupted_poses(pose_dir)
+
+        return {
+            "status": "ok",
+            "count": len(corrupted),
+            "files": corrupted,
+        }
 
     except Exception as exc:
         return {"status": "error", "message": str(exc)}
