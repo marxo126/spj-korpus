@@ -1,11 +1,12 @@
 """AI Prepartner-dictn Review — one-prepartner-dictn-at-a-time annotator workflow.
 
-Annotators see AI-predicted glosses (from Page 10 inference) with video+pose,
-and approve / correct / skip with one click. Approved prepartner-dictns write directly
-to pairings.csv as PST_PAIRED rows, ready for retraining.
+Annotators see AI-predicted glosses (from Page 10 inference) with video+pose
+in a unified interactive timeline. Approve / correct / skip with one click.
+Approved prepartner-dictns write directly to pairings.csv as PST_PAIRED rows.
 
-Keyboard shortcuts: A=Approve, S=Skip, Z=Undo, Left/Right=Navigate
+Keyboard shortcuts: A=Save, S=Skip, Z=Undo
 """
+import base64
 import logging
 import sys
 from pathlib import Path
@@ -17,16 +18,20 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 from spj.glossary import load_glossary
 from spj.inference import read_prepartner-dictns_from_eaf
 from spj.training_data import (
+    CONNECTION_ARRAYS,
     GLOSS_RE,
     PST_PAIRED,
     PST_SKIPPED,
-    make_pairing_dict,
+    encode_pose_data,
     extract_video_segment,
     load_pairings_csv,
+    make_pairing_dict,
     parse_gloss_value,
     save_pairings_csv,
-    synced_video_pose_html,
 )
+
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from components.timeline import spj_timeline
 
 logger = logging.getLogger(__name__)
 
@@ -70,10 +75,14 @@ def _load_pose_cached(pose_path_str: str):
 
 
 @st.cache_data(max_entries=5, ttl=600)
-def _extract_segment_cached(
+def _extract_segment_b64(
     video_path_str: str, start_ms: int, end_ms: int,
-) -> bytes | None:
-    return extract_video_segment(Path(video_path_str), start_ms, end_ms)
+) -> str | None:
+    """Extract video segment and return as base64 string (cached)."""
+    raw = extract_video_segment(Path(video_path_str), start_ms, end_ms)
+    if raw is None:
+        return None
+    return base64.b64encode(raw).decode("ascii")
 
 
 @st.cache_data(ttl=300)
@@ -82,17 +91,17 @@ def _read_prepartner-dictns_cached(eaf_path_str: str) -> list[dict]:
 
 
 @st.cache_data(ttl=600, max_entries=3)
-def _wrist_speed_cached(pose_path_str: str, hand: str):
-    """Cached wrist velocity — avoids O(T) recomputation on every rerun."""
-    import numpy as np
+def _motion_energy_cached(pose_path_str: str, hand: str) -> tuple[list[float], float]:
+    """Normalised wrist speed as a Python list, cached with b64 avoidance."""
     from spj.preannotate import _wrist_speed, _gaussian_smooth, load_pose_arrays
     data, conf, fps = load_pose_arrays(Path(pose_path_str))
-    # Wrist indices matching preannotate.py constants
     if hand == "right":
-        speed = _wrist_speed(data, conf, 16, 54)  # _BODY_RIGHT_WRIST, _RIGHT_HAND_WRIST
+        speed = _wrist_speed(data, conf, 16, 54)
     else:
-        speed = _wrist_speed(data, conf, 15, 33)  # _BODY_LEFT_WRIST, _LEFT_HAND_WRIST
-    return _gaussian_smooth(speed, sigma=2.0), fps
+        speed = _wrist_speed(data, conf, 15, 33)
+    smooth = _gaussian_smooth(speed, sigma=2.0)
+    max_val = smooth.max() if smooth.max() > 0 else 1.0
+    return (smooth / max_val).tolist(), fps
 
 
 def _get_glossary():
@@ -114,6 +123,7 @@ def _get_pairings_df() -> pd.DataFrame:
 def _save_pairings(pairings_df: pd.DataFrame) -> None:
     save_pairings_csv(pairings_df, PAIRINGS_CSV)
     st.session_state["ar_pairings_df"] = pairings_df
+    st.session_state.pop("ar_dedup", None)  # invalidate cached dedup
 
 
 def _fmt_ms(ms: int) -> str:
@@ -153,7 +163,6 @@ def _find_videos_with_prepartner-dictns(
     if not ANNOTATIONS_DIR.exists():
         return []
 
-    # Build inventory lookup: stem -> (video_path, fps) — vectorized
     vp_col = "video_path" if "video_path" in inventory_df.columns else "path"
     inv_lookup: dict[str, tuple[str, float]] = dict(zip(
         inventory_df[vp_col].apply(lambda p: Path(str(p)).stem),
@@ -202,16 +211,13 @@ def _find_videos_with_prepartner-dictns(
 # ---------------------------------------------------------------------------
 
 def _push_undo(pairing_id: str, previous_row: dict | None) -> None:
-    """Push undo entry — stores the previous state (None = was new)."""
     stack = st.session_state.setdefault("ar_undo_stack", [])
     stack.append({"pairing_id": pairing_id, "previous": previous_row})
-    # Cap undo history
     if len(stack) > 50:
         stack[:] = stack[-50:]
 
 
 def _pop_undo() -> dict | None:
-    """Pop last undo entry, or None if stack empty."""
     stack = st.session_state.get("ar_undo_stack", [])
     return stack.pop() if stack else None
 
@@ -234,7 +240,9 @@ if not INVENTORY_CSV.exists():
 
 inventory_df = _load_inventory()
 pairings_df = _get_pairings_df()
-dedup = _build_dedup_set(pairings_df)
+if "ar_dedup" not in st.session_state:
+    st.session_state["ar_dedup"] = _build_dedup_set(pairings_df)
+dedup = st.session_state["ar_dedup"]
 
 # Find videos with prepartner-dictns (cached at session level)
 if "ar_videos" not in st.session_state:
@@ -253,7 +261,7 @@ if not videos:
 videos.sort(key=lambda v: v["n_prepartner-dictns"] - v["n_reviewed"], reverse=True)
 
 # ---------------------------------------------------------------------------
-# Video selector — track by stem to survive re-sorting
+# Video selector
 # ---------------------------------------------------------------------------
 
 video_labels = [
@@ -276,6 +284,7 @@ prev_stem = st.session_state.get("ar_video_stem")
 if prev_stem and prev_stem != vid["stem"]:
     st.session_state.pop("ar_pred_idx", None)
     st.session_state.pop("_ar_nav_target", None)
+    st.session_state.pop("ar_timeline_result", None)
 st.session_state["ar_video_stem"] = vid["stem"]
 preds = _read_prepartner-dictns_cached(vid["eaf_path"])
 
@@ -284,7 +293,6 @@ with col_stats:
     n_tot = vid["n_prepartner-dictns"]
     st.metric("Reviewed", f"{n_rev}/{n_tot}")
 
-# Progress bar
 if n_tot > 0:
     st.progress(n_rev / n_tot)
 
@@ -311,30 +319,20 @@ for p in preds:
         p["existing_gloss"] = ""
 
 # ---------------------------------------------------------------------------
-# Prepartner-dictns timeline
-# ---------------------------------------------------------------------------
-
-with st.expander("Prepartner-dictns Timeline", expanded=True):
-    from spj.inference import prepartner-dictns_timeline_figure
-    try:
-        pose_data, _, fps = _load_pose_cached(vid["pose_path"])
-        duration_sec = pose_data.shape[0] / fps
-    except Exception:
-        duration_sec = max((p["end_ms"] for p in preds), default=5000) / 1000.0
-
-    fig = prepartner-dictns_timeline_figure(preds, duration_sec)
-    st.plotly_chart(fig, use_container_width=True)
-
-# ---------------------------------------------------------------------------
 # Prepartner-dictn selector + navigation
 # ---------------------------------------------------------------------------
+
+# Handle navigation from timeline component (prepartner-dictn click)
+timeline_result = st.session_state.get("ar_timeline_result")
+if timeline_result and isinstance(timeline_result, dict):
+    sel_idx = timeline_result.get("selected_pred_idx")
+    if sel_idx is not None and sel_idx != st.session_state.get("ar_pred_idx"):
+        st.session_state["_ar_nav_target"] = sel_idx
 
 # Navigation staging key (same pattern as page 7 Review tab)
 if "_ar_nav_target" in st.session_state:
     nav_target = st.session_state.pop("_ar_nav_target")
     st.session_state["ar_pred_idx"] = nav_target
-    # Reset trim sliders for new prepartner-dictn
-    st.session_state.pop("ar_trim_range", None)
 
 pred_labels = []
 for i, p in enumerate(preds):
@@ -355,7 +353,7 @@ if "ar_pred_idx" not in st.session_state:
             break
     st.session_state["ar_pred_idx"] = default_idx
 
-# Clamp to valid range (video may have changed; selectbox may store str)
+# Clamp to valid range
 max_idx = len(preds) - 1
 try:
     st.session_state["ar_pred_idx"] = int(st.session_state["ar_pred_idx"])
@@ -370,11 +368,6 @@ current_idx = st.selectbox(
     format_func=lambda i: pred_labels[i],
     key="ar_pred_idx",
 )
-
-# Reset trim sliders if prepartner-dictn changed (selectbox or any other way)
-if st.session_state.get("_ar_prev_pred_idx") != current_idx:
-    st.session_state.pop("ar_trim_range", None)
-st.session_state["_ar_prev_pred_idx"] = current_idx
 
 pred = preds[current_idx]
 
@@ -400,7 +393,7 @@ elif pred["review_status"] == _RST_SKIPPED:
     st.info("Previously skipped.")
 
 # ---------------------------------------------------------------------------
-# Load pose data (needed for video player AND motion energy)
+# Load pose data + prepare video segment for timeline component
 # ---------------------------------------------------------------------------
 
 _orig_start = pred["start_ms"]
@@ -414,99 +407,25 @@ except Exception as exc:
     st.error(f"Error loading pose: {exc}")
     p_fps = vid["fps"]
 
-# ---------------------------------------------------------------------------
-# Timeline trim — motion energy bar + range slider (video-editor style)
-# ---------------------------------------------------------------------------
-
-# Context: show wider window around the prepartner-dictn
-_duration = _orig_end - _orig_start
-_context_ms = max(2000, _duration * 2)
-_slider_min = max(0, _orig_start - _context_ms)
-_slider_max = _orig_end + _context_ms
-_step = 40  # ~1 frame at 25fps
-
-# Motion energy visualization (cached wrist velocity)
-if _pose_loaded:
-    try:
-        _smooth_speed, _speed_fps = _wrist_speed_cached(vid["pose_path"], pred["hand"])
-        ctx_frame_start = max(0, int(_slider_min * _speed_fps / 1000))
-        ctx_frame_end = min(len(_smooth_speed), int(_slider_max * _speed_fps / 1000))
-        ctx_speed = _smooth_speed[ctx_frame_start:ctx_frame_end]
-    except Exception:
-        ctx_speed = None
-
-    if ctx_speed is not None and len(ctx_speed) > 0:
-        max_speed = ctx_speed.max() if ctx_speed.max() > 0 else 1.0
-        ctx_speed_norm = ctx_speed / max_speed
-
-        # Build compact motion energy bar as inline HTML
-        n_bars = min(200, len(ctx_speed_norm))
-        if n_bars > 0:
-            import numpy as np
-            resampled = np.interp(
-                np.linspace(0, len(ctx_speed_norm) - 1, n_bars),
-                np.arange(len(ctx_speed_norm)),
-                ctx_speed_norm,
-            )
-            # Color: low motion = dark, high motion = bright green
-            bar_html_parts = []
-            for v in resampled:
-                g = int(80 + 175 * v)
-                bar_html_parts.append(
-                    f'<div style="flex:1;height:100%;background:rgb(0,{g},0);'
-                    f'opacity:{0.3 + 0.7 * v}"></div>'
-                )
-            # Mark original prepartner-dictn region
-            total_ms = _slider_max - _slider_min
-            orig_left_pct = (_orig_start - _slider_min) / total_ms * 100
-            orig_width_pct = (_orig_end - _orig_start) / total_ms * 100
-
-            energy_html = f"""
-            <div style="position:relative;height:28px;border-radius:4px;overflow:hidden;
-                        display:flex;margin:0 0 -10px 0;background:#111">
-                {''.join(bar_html_parts)}
-                <div style="position:absolute;left:{orig_left_pct:.1f}%;width:{orig_width_pct:.1f}%;
-                            top:0;height:100%;border-left:2px solid #ff4444;border-right:2px solid #ff4444;
-                            background:rgba(255,68,68,0.15);pointer-events:none"></div>
-                <div style="position:absolute;left:4px;top:2px;font-size:10px;color:#888;
-                            pointer-events:none">Motion ({pred['hand'][0].upper()}H)</div>
-            </div>
-            """
-            st.components.v1.html(energy_html, height=30)
-
-# Range slider for trim (single slider, two handles)
-trim_range = st.slider(
-    "Trim",
-    min_value=_slider_min,
-    max_value=_slider_max,
-    value=(_orig_start, _orig_end),
-    step=_step,
-    key="ar_trim_range",
-    format="%dms",
-    label_visibility="collapsed",
-)
-trim_start, trim_end = trim_range
-
-if trim_start >= trim_end:
-    trim_start, trim_end = _orig_start, _orig_end
-
-_use_start_ms = trim_start
-_use_end_ms = trim_end
-
-# Show trim info only if trimmed
-_was_trimmed = trim_start != _orig_start or trim_end != _orig_end
-if _was_trimmed:
-    st.caption(
-        f"Trimmed: {_fmt_ms(trim_start)}\u2192{_fmt_ms(trim_end)} "
-        f"(was {_fmt_ms(_orig_start)}\u2192{_fmt_ms(_orig_end)})"
-    )
+# Get trim values from timeline result, or default to prepartner-dictn bounds
+_use_start_ms = _orig_start
+_use_end_ms = _orig_end
+if timeline_result and isinstance(timeline_result, dict):
+    _tl_sel = timeline_result.get("selected_pred_idx")
+    if _tl_sel == current_idx:
+        _tr_s = timeline_result.get("trim_start_ms")
+        _tr_e = timeline_result.get("trim_end_ms")
+        if _tr_s is not None and _tr_e is not None and _tr_s < _tr_e:
+            _use_start_ms = int(_tr_s)
+            _use_end_ms = int(_tr_e)
 
 # ---------------------------------------------------------------------------
-# Video + Pose player
+# Unified Timeline Component (video + pose + interactive timeline)
 # ---------------------------------------------------------------------------
 
 if _pose_loaded:
     try:
+        # Prepare video segment (with context for the current prepartner-dictn)
         frame_start = int(_use_start_ms * p_fps / 1000)
         frame_end = int(_use_end_ms * p_fps / 1000)
         frame_start = max(0, min(frame_start, p_data.shape[0] - 1))
@@ -519,19 +438,71 @@ if _pose_loaded:
         display_start_ms = int(display_frame_start / p_fps * 1000)
         display_end_ms = int(display_frame_end / p_fps * 1000)
 
-        video_bytes = _extract_segment_cached(
+        video_b64 = _extract_segment_b64(
             vid["video_path"], display_start_ms, display_end_ms,
         )
-        if video_bytes:
-            html = synced_video_pose_html(
-                video_bytes, p_data, p_conf, p_fps,
-                display_frame_start, display_frame_end,
+
+        if video_b64:
+            pos_b64, conf_b64, n_frames = encode_pose_data(
+                p_data, p_conf, display_frame_start, display_frame_end,
             )
-            st.components.v1.html(html, height=450)
+
+            # Motion energy (cached as normalised list)
+            motion_energy: list[float] = []
+            energy_fps = p_fps
+            try:
+                motion_energy, energy_fps = _motion_energy_cached(
+                    vid["pose_path"], pred["hand"],
+                )
+            except Exception:
+                pass
+
+            duration_ms = int(p_data.shape[0] / p_fps * 1000)
+
+            preds_json = [
+                {
+                    "start_ms": p["start_ms"],
+                    "end_ms": p["end_ms"],
+                    "hand": p["hand"],
+                    "predicted_gloss": p["predicted_gloss"],
+                    "prepartner-dictn_confidence": p["prepartner-dictn_confidence"],
+                    "review_status": p.get("review_status", _RST_PENDING),
+                }
+                for p in preds
+            ]
+
+            result = spj_timeline(
+                video_b64=video_b64,
+                pos_b64=pos_b64,
+                conf_b64=conf_b64,
+                n_frames=n_frames,
+                fps=p_fps,
+                duration_ms=duration_ms,
+                prepartner-dictns=preds_json,
+                motion_energy=motion_energy,
+                energy_fps=energy_fps,
+                current_pred_idx=current_idx,
+                connections=CONNECTION_ARRAYS,
+                segment_start_ms=display_start_ms,
+                segment_end_ms=display_end_ms,
+                key="spj_timeline",
+                height=520,
+            )
+
+            if result is not None:
+                st.session_state["ar_timeline_result"] = result
         else:
             st.warning("Could not extract video segment.")
     except Exception as exc:
         st.error(f"Error loading pose/video: {exc}")
+
+# Show trim info if trimmed
+_was_trimmed = _use_start_ms != _orig_start or _use_end_ms != _orig_end
+if _was_trimmed:
+    st.caption(
+        f"Trimmed: {_fmt_ms(_use_start_ms)}\u2192{_fmt_ms(_use_end_ms)} "
+        f"(was {_fmt_ms(_orig_start)}\u2192{_fmt_ms(_orig_end)})"
+    )
 
 # ---------------------------------------------------------------------------
 # Action buttons
@@ -542,7 +513,6 @@ def _next_pending_idx() -> int | None:
     for i in range(current_idx + 1, len(preds)):
         if preds[i]["review_status"] == _RST_PENDING:
             return i
-    # Wrap around
     for i in range(0, current_idx):
         if preds[i]["review_status"] == _RST_PENDING:
             return i
@@ -552,10 +522,9 @@ def _next_pending_idx() -> int | None:
 def _write_pairing(word: str, gloss_id: str, status: str, note: str) -> None:
     """Write a pairing row using trimmed timestamps."""
     stem = vid["stem"]
-    p_fps = vid["fps"]
+    p_fps_val = vid["fps"]
     hand = pred["hand"]
 
-    # Use trimmed boundaries (may differ from original prepartner-dictn)
     start_ms = _use_start_ms
     end_ms = _use_end_ms
     if start_ms != pred["start_ms"] or end_ms != pred["end_ms"]:
@@ -572,9 +541,9 @@ def _write_pairing(word: str, gloss_id: str, status: str, note: str) -> None:
         hand=hand,
         sign_start_ms=start_ms,
         sign_end_ms=end_ms,
-        sign_frame_start=int(start_ms * p_fps / 1000),
-        sign_frame_end=int(end_ms * p_fps / 1000),
-        fps=p_fps,
+        sign_frame_start=int(start_ms * p_fps_val / 1000),
+        sign_frame_end=int(end_ms * p_fps_val / 1000),
+        fps=p_fps_val,
         note=note,
         word=word,
         gloss_id=gloss_id,
@@ -583,7 +552,6 @@ def _write_pairing(word: str, gloss_id: str, status: str, note: str) -> None:
         suggestion_confidence=pred["prepartner-dictn_confidence"],
     )
 
-    # Append to pairings (save previous for undo)
     pdf = _get_pairings_df()
     previous_row = None
     if not pdf.empty:
@@ -603,7 +571,6 @@ def _write_pairing(word: str, gloss_id: str, status: str, note: str) -> None:
 
 
 def _do_undo() -> bool:
-    """Undo last action. Returns True if undo was performed."""
     entry = _pop_undo()
     if entry is None:
         return False
@@ -623,7 +590,6 @@ act_input, act_approve, act_skip, act_undo, act_prev, act_next = st.columns(
     [2.5, 1, 0.8, 0.7, 0.4, 0.4],
 )
 with act_input:
-    # Show known word meanings as hint
     _glossary = _get_glossary()
     _cur_gloss = pred["predicted_gloss"]
     _entry = _glossary.get_entry(_cur_gloss)
@@ -642,19 +608,10 @@ with act_input:
 
 
 def _resolve_words_and_gloss() -> tuple[str, str]:
-    """Resolve word(s) and gloss_id from user input.
-
-    Input field supports:
-      - Empty → approve AI prepartner-dictn as-is
-      - "voda" → single word (looked up in glossary for gloss_id)
-      - "WATER-1" → gloss ID directly
-      - "voda, water, aqua" → multiple word meanings (comma-separated)
-    """
     glossary = _get_glossary()
     raw = correct_input.strip()
 
     if not raw:
-        # Approve AI prepartner-dictn
         gloss_id = pred["predicted_gloss"]
         word = ""
         entry = glossary.get_entry(gloss_id)
@@ -666,16 +623,13 @@ def _resolve_words_and_gloss() -> tuple[str, str]:
             word, gloss_id = parse_gloss_value(gloss_id, glossary)
         return word, gloss_id
 
-    # Check for comma-separated multiple words
     if "," in raw:
         parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
         if parts:
             word = ", ".join(parts)
-            # Use first word to find gloss_id
             _, gloss_id = parse_gloss_value(parts[0], glossary)
             if not gloss_id:
                 gloss_id = pred["predicted_gloss"]
-            # Register all forms in glossary
             if gloss_id:
                 for w in parts:
                     glossary.add_form(gloss_id, w)
@@ -683,14 +637,11 @@ def _resolve_words_and_gloss() -> tuple[str, str]:
                 save_glossary(glossary, GLOSSARY_JSON)
             return word, gloss_id
 
-    # Single value — word or gloss ID
     word, gloss_id = parse_gloss_value(raw, glossary)
     return word, gloss_id
 
 
 with act_approve:
-    # Single "Save" action: if gloss field is empty → approve AI prepartner-dictn as-is,
-    # if gloss field has text → save the corrected gloss. No separate Approve/Correct.
     _has_correction = bool(correct_input.strip())
     _btn_label = "\u2705 Save (A)" if not _has_correction else "\u270f Save (A)"
     if st.button(_btn_label, use_container_width=True, type="primary"):
@@ -730,13 +681,12 @@ with act_next:
         st.rerun()
 
 # ---------------------------------------------------------------------------
-# Keyboard shortcuts (A=Approve, S=Skip, Z=Undo, Arrow keys=Navigate)
+# Keyboard shortcuts (A=Save, S=Skip, Z=Undo)
 # ---------------------------------------------------------------------------
 
 st.components.v1.html("""
 <script>
 document.addEventListener('keydown', function(e) {
-    // Skip if user is typing in an input field
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
     const buttons = parent.document.querySelectorAll('button[data-testid="stBaseButton-secondary"], button[data-testid="stBaseButton-primary"]');
@@ -747,11 +697,9 @@ document.addEventListener('keydown', function(e) {
     }
 
     switch(e.key) {
-        case 'a': case 'A': clickButton('Approve'); break;
+        case 'a': case 'A': clickButton('Save'); break;
         case 's': case 'S': e.preventDefault(); clickButton('Skip'); break;
         case 'z': case 'Z': clickButton('Undo'); break;
-        case 'ArrowLeft':  clickButton('\u25c0'); break;
-        case 'ArrowRight': clickButton('\u25b6'); break;
     }
 });
 </script>
@@ -770,11 +718,10 @@ cols = st.columns(4)
 cols[0].metric("\u2705 Approved", n_approved)
 cols[1].metric("\u23ed Skipped", n_skipped)
 cols[2].metric("\U0001f7e1 Pending", n_pending)
-cols[3].caption("**Shortcuts:** A=Approve, S=Skip, Z=Undo, \u2190\u2192=Navigate")
+cols[3].caption("**Shortcuts:** A=Save, S=Skip, Z=Undo, \u2190\u2192=Navigate")
 
-# Refresh button
 if st.button("Refresh video list"):
-    st.session_state.pop("ar_videos", None)
-    st.session_state.pop("ar_pairings_df", None)
+    for k in ("ar_videos", "ar_pairings_df", "ar_dedup", "ar_timeline_result"):
+        st.session_state.pop(k, None)
     _read_prepartner-dictns_cached.clear()
     st.rerun()

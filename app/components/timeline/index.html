@@ -1,0 +1,596 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: transparent; font-family: -apple-system, BlinkMacSystemFont, sans-serif; color: #fafafa; overflow: hidden; }
+#wrapper { display: flex; flex-direction: column; width: 100%; }
+
+/* Video + Pose row */
+#vp { display: flex; gap: 8px; width: 100%; justify-content: center; align-items: flex-start; }
+video { background: #000; border-radius: 6px; flex: 1; min-width: 0; max-width: 50%; }
+#poseCanvas { background: #000; border-radius: 6px; }
+
+/* Video controls row */
+#vcontrols { display: flex; align-items: center; gap: 6px; padding: 4px 4px; font-size: 12px; }
+#vcontrols button { background: #262730; border: 1px solid #4a4a5a; color: #fafafa;
+  border-radius: 4px; padding: 2px 10px; cursor: pointer; font-size: 14px; line-height: 1; }
+#vcontrols button:hover { background: #3a3a4a; }
+#vcontrols button.on { background: #ff6b6b33; border-color: #ff6b6b; }
+#vcontrols select { background: #262730; border: 1px solid #4a4a5a; color: #fafafa;
+  border-radius: 4px; padding: 1px 4px; font-size: 11px; cursor: pointer; }
+#vtime { font-variant-numeric: tabular-nums; font-size: 11px; opacity: .7; }
+
+/* Timeline canvas */
+#timeline-wrapper { position: relative; margin: 4px 0; cursor: default; }
+#tlCanvas { display: block; width: 100%; border-radius: 4px; }
+
+/* Controls bar below timeline */
+#tcontrols { display: flex; align-items: center; gap: 6px; padding: 2px 4px; font-size: 11px; }
+#tcontrols button { background: #262730; border: 1px solid #4a4a5a; color: #fafafa;
+  border-radius: 3px; padding: 1px 8px; cursor: pointer; font-size: 11px; }
+#tcontrols button:hover { background: #3a3a4a; }
+#zoomLabel { opacity: .6; min-width: 40px; }
+#trimInfo { opacity: .7; margin-left: auto; font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div id="wrapper">
+  <div id="vp">
+    <video id="vid" preload="auto" playsinline muted></video>
+    <canvas id="poseCanvas"></canvas>
+  </div>
+  <div id="vcontrols">
+    <button id="pp" title="Play/Pause (Space)">&#x25B6;</button>
+    <select id="sp">
+      <option value="0.25">0.25x</option>
+      <option value="0.5">0.5x</option>
+      <option value="1" selected>1x</option>
+      <option value="1.5">1.5x</option>
+      <option value="2">2x</option>
+    </select>
+    <button id="lp" class="on" title="Loop">&#x21BB;</button>
+    <span id="vtime">00:00.0</span>
+  </div>
+  <div id="timeline-wrapper">
+    <canvas id="tlCanvas"></canvas>
+  </div>
+  <div id="tcontrols">
+    <button id="zoomFit" title="Fit all">Fit</button>
+    <span id="zoomLabel">100%</span>
+    <button id="zoomIn" title="Zoom In">+</button>
+    <button id="zoomOut" title="Zoom Out">&minus;</button>
+    <span id="trimInfo"></span>
+  </div>
+</div>
+
+<script>
+(function() {
+"use strict";
+
+// ── Layout constants ───────────────────────────────────────────────
+var TL_ENERGY_H = 28, TL_PRED_H = 22, TL_GAP = 4;
+var TL_H = TL_ENERGY_H + TL_GAP + TL_PRED_H + TL_GAP + TL_PRED_H + TL_GAP + 14;
+var NL = 543; // MediaPipe landmark count
+
+function rowY(hand) {
+  var rhY = TL_ENERGY_H + TL_GAP;
+  return hand === "right" ? rhY : rhY + TL_PRED_H + TL_GAP;
+}
+var RULER_Y = TL_ENERGY_H + TL_GAP + TL_PRED_H + TL_GAP + TL_PRED_H + TL_GAP + 2;
+
+// ── State ──────────────────────────────────────────────────────────
+var NF = 0, PFPS = 25;
+var P = null, CF = null;
+var BC, HC, FL, FLE, FRE, FLB, FRB, FO;
+var prepartner-dictns = [], motionEnergy = [], energyFps = 25;
+var durationMs = 1000, currentPredIdx = 0;
+var segStartMs = 0, segEndMs = 1000;
+var trimStartMs = 0, trimEndMs = 1000, origTrimStart = 0, origTrimEnd = 1000;
+var viewStartMs = 0, viewEndMs = 1000;
+var prevPredIdx = -1; // track prepartner-dictn changes across reruns
+
+// Drag state
+var dragMode = null, dragStartX = 0, dragStartViewStart = 0, dragStartViewEnd = 0;
+
+// Cached energy layer (redrawn only when view/energy changes)
+var energyImageData = null, energyCacheKey = "";
+
+// Elements
+var vid, poseCanvas, px, tlCanvas, tx;
+var ppBtn, spSel, lpBtn, vtimeSpan;
+var zoomFitBtn, zoomInBtn, zoomOutBtn, zoomLabel, trimInfo;
+
+// ── Base64 decode ──────────────────────────────────────────────────
+function d64(s) {
+  var b = atob(s), a = new Uint8Array(b.length);
+  for (var i = 0; i < b.length; i++) a[i] = b.charCodeAt(i);
+  return new Float32Array(a.buffer);
+}
+
+// ── Pose drawing ───────────────────────────────────────────────────
+function gp(f, i) { var o = (f * NL + i) * 2; return [P[o], P[o+1]]; }
+function gc(f, i) { return CF[f * NL + i]; }
+
+var W, H;
+function uw() {
+  W = parseFloat(poseCanvas.style.width) || poseCanvas.width;
+  H = parseFloat(poseCanvas.style.height) || poseCanvas.height;
+}
+
+function el(f, cn, o, cl, lw) {
+  px.strokeStyle = cl; px.lineWidth = lw; px.beginPath();
+  for (var k = 0; k < cn.length; k++) {
+    var a = cn[k][0] + o, b = cn[k][1] + o;
+    if (gc(f,a) < .1 || gc(f,b) < .1) continue;
+    var p = gp(f,a), q = gp(f,b);
+    px.moveTo(p[0]*W, p[1]*H); px.lineTo(q[0]*W, q[1]*H);
+  }
+  px.stroke();
+}
+
+function dt(f, s, e, cl, sz) {
+  px.fillStyle = cl;
+  for (var i = s; i < e; i++) {
+    if (gc(f,i) < .1) continue;
+    var p = gp(f,i);
+    px.beginPath(); px.arc(p[0]*W, p[1]*H, sz, 0, 6.283); px.fill();
+  }
+}
+
+function drawPose(f) {
+  uw();
+  px.clearRect(0, 0, W, H);
+  px.fillStyle = "#000"; px.fillRect(0, 0, W, H);
+  if (f < 0 || f >= NF) return;
+  var s = Math.max(1, W / 200);
+  el(f, BC, 0, "royalblue", 1.5*s); dt(f, 0, 15, "royalblue", 2.5*s);
+  el(f, HC, 33, "limegreen", 1.2*s); dt(f, 33, 54, "limegreen", 2*s);
+  el(f, HC, 54, "crimson", 1.2*s); dt(f, 54, 75, "crimson", 2*s);
+  el(f, FO, 75, "rgba(255,215,0,0.2)", 0.8*s);
+  el(f, FL, 75, "hotpink", 1.2*s);
+  el(f, FLE, 75, "cyan", 1*s); el(f, FRE, 75, "cyan", 1*s);
+  el(f, FLB, 75, "orange", 1*s); el(f, FRB, 75, "orange", 1*s);
+}
+
+// ── Video sizing ───────────────────────────────────────────────────
+function resizeVideoAndPose() {
+  var vp = document.getElementById("vp");
+  var dpr = window.devicePixelRatio || 1;
+  var avW = Math.floor((vp.clientWidth - 8) / 2) || 300;
+  var avH = 300;
+  var ar = (vid.videoWidth && vid.videoHeight)
+    ? vid.videoHeight / vid.videoWidth : 0.75;
+  var w = avW, h = Math.round(avW * ar);
+  if (h > avH) { h = avH; w = Math.round(h / ar); }
+  vid.style.flex = "none"; vid.style.width = w + "px"; vid.style.height = h + "px";
+  poseCanvas.width = Math.round(w * dpr);
+  poseCanvas.height = Math.round(h * dpr);
+  poseCanvas.style.width = w + "px";
+  poseCanvas.style.height = h + "px";
+  px.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+// ── Video ↔ Pose sync ──────────────────────────────────────────────
+var vidDur = 0;
+function syncFrame() {
+  if (!vidDur) vidDur = vid.duration || 1;
+  var t = vid.currentTime;
+  var f = Math.min(Math.floor(t * PFPS), NF - 1);
+  drawPose(Math.max(0, f));
+  var absMs = segStartMs + t * 1000;
+  vtimeSpan.textContent = fmtMs(absMs);
+  ppBtn.innerHTML = vid.paused ? "&#x25B6;" : "&#x23F8;";
+  drawTimeline(absMs);
+}
+
+function fmtMs(ms) {
+  var s = ms / 1000;
+  var m = Math.floor(s / 60), sec = Math.floor(s % 60), ms10 = Math.floor((s % 1) * 10);
+  return (m < 10 ? "0" : "") + m + ":" + (sec < 10 ? "0" : "") + sec + "." + ms10;
+}
+
+// ── Timeline rendering ─────────────────────────────────────────────
+function tlWidth() {
+  return parseFloat(tlCanvas.style.width) || 600;
+}
+
+function resizeTimeline() {
+  var dpr = window.devicePixelRatio || 1;
+  var wrapper = document.getElementById("timeline-wrapper");
+  var w = wrapper.clientWidth || 600;
+  tlCanvas.width = Math.round(w * dpr);
+  tlCanvas.height = Math.round(TL_H * dpr);
+  tlCanvas.style.width = w + "px";
+  tlCanvas.style.height = TL_H + "px";
+  tx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  energyImageData = null; // invalidate cache on resize
+}
+
+function buildEnergyCache(w) {
+  var key = viewStartMs + ":" + viewEndMs + ":" + w;
+  if (key === energyCacheKey && energyImageData) return;
+  energyCacheKey = key;
+
+  // Draw energy into an offscreen canvas, then capture as ImageData
+  var oc = document.createElement("canvas");
+  oc.width = w; oc.height = TL_ENERGY_H;
+  var octx = oc.getContext("2d");
+
+  if (motionEnergy.length > 0) {
+    var viewDurMs = viewEndMs - viewStartMs;
+    for (var px2 = 0; px2 < w; px2++) {
+      var ms = viewStartMs + (px2 / w) * viewDurMs;
+      var eIdx = Math.floor(ms * energyFps / 1000);
+      if (eIdx < 0 || eIdx >= motionEnergy.length) continue;
+      var v = motionEnergy[eIdx];
+      var g = Math.round(40 + 180 * v);
+      var a = 0.15 + 0.35 * v;
+      octx.fillStyle = "rgba(0," + g + ",0," + a + ")";
+      octx.fillRect(px2, 0, 1, TL_ENERGY_H);
+    }
+  }
+  energyImageData = oc;
+}
+
+function drawTimeline(playheadMs) {
+  var w = tlWidth();
+  var viewRange = viewEndMs - viewStartMs;
+  tx.clearRect(0, 0, w, TL_H);
+  tx.fillStyle = "#0d0d0d";
+  tx.fillRect(0, 0, w, TL_H);
+
+  // ── Cached energy heatmap ──
+  buildEnergyCache(Math.round(w));
+  if (energyImageData) {
+    tx.drawImage(energyImageData, 0, 0);
+  }
+
+  // ── Inline ms→x transform (avoids function call overhead in hot loop) ──
+  function m2x(ms) { return (ms - viewStartMs) / viewRange * w; }
+
+  // ── Prepartner-dictn blocks ──
+  for (var i = 0; i < prepartner-dictns.length; i++) {
+    var p = prepartner-dictns[i];
+    var x1 = m2x(p.start_ms);
+    var x2 = m2x(p.end_ms);
+    if (x2 < 0 || x1 > w) continue;
+
+    var y = rowY(p.hand);
+    var isCurrent = (i === currentPredIdx);
+    var baseColor = p.hand === "right" ? "crimson" : "limegreen";
+    var opacity = Math.max(0.3, Math.min(1.0, p.prepartner-dictn_confidence || 0.5));
+
+    tx.globalAlpha = isCurrent ? 1.0 : opacity * 0.7;
+    tx.fillStyle = baseColor;
+    tx.fillRect(x1, y, Math.max(2, x2 - x1), TL_PRED_H);
+    tx.globalAlpha = 1.0;
+
+    // Status border
+    var status = p.review_status || "pending";
+    if (status === "approved") {
+      tx.strokeStyle = "#00ff00"; tx.lineWidth = 2;
+    } else if (status === "skipped") {
+      tx.strokeStyle = "#666"; tx.lineWidth = 1;
+    } else {
+      tx.strokeStyle = "#ffcc00"; tx.lineWidth = 1;
+      tx.setLineDash([3, 3]);
+    }
+    tx.strokeRect(x1, y, Math.max(2, x2 - x1), TL_PRED_H);
+    tx.setLineDash([]);
+
+    // Current selection highlight + trim handles
+    if (isCurrent) {
+      tx.strokeStyle = "#fff"; tx.lineWidth = 2;
+      var tx1 = m2x(trimStartMs), tx2 = m2x(trimEndMs);
+      tx.strokeRect(tx1, y - 2, Math.max(2, tx2 - tx1), TL_PRED_H + 4);
+      tx.fillStyle = "#fff";
+      tx.beginPath(); tx.moveTo(tx1, y-4); tx.lineTo(tx1+6, y-4); tx.lineTo(tx1, y+4); tx.fill();
+      tx.beginPath(); tx.moveTo(tx2, y-4); tx.lineTo(tx2-6, y-4); tx.lineTo(tx2, y+4); tx.fill();
+    }
+
+    // Gloss label
+    var blockW = x2 - x1;
+    if (blockW > 30) {
+      tx.fillStyle = isCurrent ? "#fff" : "rgba(255,255,255,0.8)";
+      tx.font = (isCurrent ? "bold " : "") + "10px -apple-system, sans-serif";
+      tx.textBaseline = "middle";
+      var label = p.predicted_gloss || "";
+      var maxChars = Math.floor(blockW / 6);
+      if (label.length > maxChars) label = label.substring(0, maxChars - 1) + "…";
+      tx.fillText(label, x1 + 3, y + TL_PRED_H / 2);
+    }
+  }
+
+  // ── Row labels ──
+  tx.fillStyle = "rgba(255,255,255,0.4)";
+  tx.font = "9px -apple-system, sans-serif";
+  tx.textBaseline = "top";
+  tx.fillText("RH", 2, rowY("right") + 2);
+  tx.fillText("LH", 2, rowY("left") + 2);
+
+  // ── Time ruler ──
+  tx.strokeStyle = "rgba(255,255,255,0.2)"; tx.lineWidth = 1;
+  tx.beginPath(); tx.moveTo(0, RULER_Y); tx.lineTo(w, RULER_Y); tx.stroke();
+
+  var viewDurSec = viewRange / 1000;
+  var tickInterval = viewDurSec < 2 ? 0.1 : viewDurSec < 10 ? 0.5 : viewDurSec < 30 ? 1 : viewDurSec < 120 ? 5 : 10;
+  var firstTick = Math.ceil(viewStartMs / 1000 / tickInterval) * tickInterval;
+  tx.fillStyle = "rgba(255,255,255,0.3)";
+  tx.font = "8px -apple-system, sans-serif";
+  tx.textBaseline = "top";
+  for (var t = firstTick; t * 1000 < viewEndMs; t += tickInterval) {
+    var tpx = m2x(t * 1000);
+    tx.beginPath(); tx.moveTo(tpx, RULER_Y); tx.lineTo(tpx, RULER_Y + 4); tx.stroke();
+    tx.fillText(t.toFixed(tickInterval < 1 ? 1 : 0) + "s", tpx + 2, RULER_Y + 2);
+  }
+
+  // ── Playhead ──
+  if (playheadMs !== undefined && playheadMs >= viewStartMs && playheadMs <= viewEndMs) {
+    var phX = m2x(playheadMs);
+    tx.strokeStyle = "#fff"; tx.lineWidth = 1.5;
+    tx.beginPath(); tx.moveTo(phX, 0); tx.lineTo(phX, TL_H); tx.stroke();
+    tx.fillStyle = "#fff";
+    tx.beginPath(); tx.moveTo(phX-4, 0); tx.lineTo(phX+4, 0); tx.lineTo(phX, 6); tx.fill();
+  }
+
+  // ── Trim info ──
+  if (trimInfo) {
+    var trimmed = (trimStartMs !== origTrimStart || trimEndMs !== origTrimEnd);
+    trimInfo.textContent = fmtMs(trimStartMs) + " → " + fmtMs(trimEndMs) + (trimmed ? " (trimmed)" : "");
+    trimInfo.style.color = trimmed ? "#ffcc00" : "";
+  }
+}
+
+// ── Timeline interaction ───────────────────────────────────────────
+function hitTest(mouseX, mouseY) {
+  var p = prepartner-dictns[currentPredIdx];
+  if (p) {
+    var y = rowY(p.hand);
+    if (mouseY >= y - 4 && mouseY <= y + TL_PRED_H + 4) {
+      var w = tlWidth(), viewRange = viewEndMs - viewStartMs;
+      var lx = (trimStartMs - viewStartMs) / viewRange * w;
+      var rx = (trimEndMs - viewStartMs) / viewRange * w;
+      if (Math.abs(mouseX - lx) < 10) return "trimLeft";
+      if (Math.abs(mouseX - rx) < 10) return "trimRight";
+    }
+  }
+
+  var w = tlWidth(), viewRange = viewEndMs - viewStartMs;
+  for (var i = 0; i < prepartner-dictns.length; i++) {
+    var pr = prepartner-dictns[i];
+    var py = rowY(pr.hand);
+    if (mouseY >= py && mouseY <= py + TL_PRED_H) {
+      var x1 = (pr.start_ms - viewStartMs) / viewRange * w;
+      var x2 = (pr.end_ms - viewStartMs) / viewRange * w;
+      if (mouseX >= x1 && mouseX <= x2) return { type: "selectPred", idx: i };
+    }
+  }
+  return null;
+}
+
+function xToMs(x) {
+  return viewStartMs + x / tlWidth() * (viewEndMs - viewStartMs);
+}
+
+function setupTimelineEvents() {
+  tlCanvas.addEventListener("mousedown", function(e) {
+    var rect = tlCanvas.getBoundingClientRect();
+    var mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top;
+
+    var hit = hitTest(mouseX, mouseY);
+    if (hit === "trimLeft" || hit === "trimRight") {
+      dragMode = hit; dragStartX = mouseX;
+      e.preventDefault(); return;
+    }
+    if (hit && hit.type === "selectPred") {
+      sendValue({ selected_pred_idx: hit.idx, trim_start_ms: prepartner-dictns[hit.idx].start_ms, trim_end_ms: prepartner-dictns[hit.idx].end_ms });
+      e.preventDefault(); return;
+    }
+    if (e.shiftKey) {
+      dragMode = "pan"; dragStartX = mouseX;
+      dragStartViewStart = viewStartMs; dragStartViewEnd = viewEndMs;
+      e.preventDefault(); return;
+    }
+    // Click empty area → seek
+    var ms = xToMs(mouseX), relMs = ms - segStartMs;
+    if (vid.duration && relMs >= 0 && relMs <= vid.duration * 1000) {
+      vid.currentTime = relMs / 1000; syncFrame();
+    }
+  });
+
+  tlCanvas.addEventListener("mousemove", function(e) {
+    var rect = tlCanvas.getBoundingClientRect();
+    var mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top;
+
+    if (dragMode === "trimLeft") {
+      trimStartMs = Math.round(Math.max(0, Math.min(xToMs(mouseX), trimEndMs - 40)) / 10) * 10;
+      drawTimeline(segStartMs + (vid.currentTime || 0) * 1000); return;
+    }
+    if (dragMode === "trimRight") {
+      trimEndMs = Math.round(Math.max(trimStartMs + 40, Math.min(xToMs(mouseX), durationMs)) / 10) * 10;
+      drawTimeline(segStartMs + (vid.currentTime || 0) * 1000); return;
+    }
+    if (dragMode === "pan") {
+      var w = tlWidth();
+      var msPerPx = (dragStartViewEnd - dragStartViewStart) / w;
+      var dms = -(mouseX - dragStartX) * msPerPx;
+      var newStart = Math.max(0, dragStartViewStart + dms);
+      var newEnd = newStart + (dragStartViewEnd - dragStartViewStart);
+      if (newEnd > durationMs) { newEnd = durationMs; newStart = newEnd - (dragStartViewEnd - dragStartViewStart); }
+      viewStartMs = Math.max(0, newStart); viewEndMs = newEnd;
+      drawTimeline(segStartMs + (vid.currentTime || 0) * 1000); return;
+    }
+
+    var hit = hitTest(mouseX, mouseY);
+    tlCanvas.style.cursor = (hit === "trimLeft" || hit === "trimRight") ? "ew-resize"
+      : (hit && hit.type === "selectPred") ? "pointer"
+      : e.shiftKey ? "grab" : "crosshair";
+  });
+
+  function onMouseUp() {
+    if (dragMode === "trimLeft" || dragMode === "trimRight") {
+      sendValue({ trim_start_ms: Math.round(trimStartMs), trim_end_ms: Math.round(trimEndMs), selected_pred_idx: currentPredIdx });
+    }
+    dragMode = null;
+  }
+  tlCanvas.addEventListener("mouseup", onMouseUp);
+  document.addEventListener("mouseup", onMouseUp);
+
+  tlCanvas.addEventListener("wheel", function(e) {
+    e.preventDefault();
+    var rect = tlCanvas.getBoundingClientRect();
+    var mouseX = e.clientX - rect.left, w = tlWidth();
+    var frac = mouseX / w;
+    var mouseMs = viewStartMs + frac * (viewEndMs - viewStartMs);
+    var viewDur = viewEndMs - viewStartMs;
+    var zoomFactor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+    var newDur = Math.max(500, Math.min(durationMs, viewDur * zoomFactor));
+    viewStartMs = mouseMs - frac * newDur;
+    viewEndMs = mouseMs + (1 - frac) * newDur;
+    if (viewStartMs < 0) { viewEndMs -= viewStartMs; viewStartMs = 0; }
+    if (viewEndMs > durationMs) { viewStartMs -= (viewEndMs - durationMs); viewEndMs = durationMs; }
+    viewStartMs = Math.max(0, viewStartMs);
+    updateZoomLabel();
+    drawTimeline(segStartMs + (vid.currentTime || 0) * 1000);
+  }, { passive: false });
+}
+
+function updateZoomLabel() {
+  if (zoomLabel) zoomLabel.textContent = Math.round(durationMs / (viewEndMs - viewStartMs) * 100) + "%";
+}
+
+// ── Streamlit communication ────────────────────────────────────────
+var _lastSent = null;
+function sendValue(val) {
+  var s = JSON.stringify(val);
+  if (s === _lastSent) return;
+  _lastSent = s;
+  window.Streamlit.setComponentValue(val);
+}
+
+// ── Init ───────────────────────────────────────────────────────────
+function init() {
+  vid = document.getElementById("vid");
+  poseCanvas = document.getElementById("poseCanvas");
+  px = poseCanvas.getContext("2d");
+  tlCanvas = document.getElementById("tlCanvas");
+  tx = tlCanvas.getContext("2d");
+  ppBtn = document.getElementById("pp");
+  spSel = document.getElementById("sp");
+  lpBtn = document.getElementById("lp");
+  vtimeSpan = document.getElementById("vtime");
+  zoomFitBtn = document.getElementById("zoomFit");
+  zoomInBtn = document.getElementById("zoomIn");
+  zoomOutBtn = document.getElementById("zoomOut");
+  zoomLabel = document.getElementById("zoomLabel");
+  trimInfo = document.getElementById("trimInfo");
+
+  ppBtn.onclick = function() { if (vid.paused) vid.play(); else vid.pause(); syncFrame(); };
+  spSel.onchange = function() { vid.playbackRate = +spSel.value; };
+  lpBtn.onclick = function() { vid.loop = !vid.loop; lpBtn.className = vid.loop ? "on" : ""; };
+  vid.loop = true;
+
+  zoomFitBtn.onclick = function() {
+    viewStartMs = 0; viewEndMs = durationMs;
+    updateZoomLabel(); drawTimeline(segStartMs + (vid.currentTime || 0) * 1000);
+  };
+  zoomInBtn.onclick = function() {
+    var mid = (viewStartMs + viewEndMs) / 2, halfDur = Math.max(250, (viewEndMs - viewStartMs) / 2 / 1.5);
+    viewStartMs = Math.max(0, mid - halfDur); viewEndMs = Math.min(durationMs, mid + halfDur);
+    updateZoomLabel(); drawTimeline(segStartMs + (vid.currentTime || 0) * 1000);
+  };
+  zoomOutBtn.onclick = function() {
+    var mid = (viewStartMs + viewEndMs) / 2, halfDur = (viewEndMs - viewStartMs) / 2 * 1.5;
+    viewStartMs = Math.max(0, mid - halfDur); viewEndMs = Math.min(durationMs, mid + halfDur);
+    updateZoomLabel(); drawTimeline(segStartMs + (vid.currentTime || 0) * 1000);
+  };
+
+  document.onkeydown = function(e) {
+    if (e.code === "Space") { e.preventDefault(); ppBtn.click(); }
+    else if (e.code === "ArrowLeft" && !e.shiftKey) {
+      e.preventDefault(); vid.currentTime = Math.max(0, vid.currentTime - 1/PFPS); syncFrame();
+    }
+    else if (e.code === "ArrowRight" && !e.shiftKey) {
+      e.preventDefault(); vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 1/PFPS); syncFrame();
+    }
+  };
+
+  var hasRVFC = "requestVideoFrameCallback" in HTMLVideoElement.prototype;
+  if (hasRVFC) {
+    vid.requestVideoFrameCallback(function onFrame() { syncFrame(); vid.requestVideoFrameCallback(onFrame); });
+  }
+  vid.addEventListener("timeupdate", syncFrame);
+  vid.addEventListener("seeked", syncFrame);
+  vid.addEventListener("loadedmetadata", function() {
+    vidDur = vid.duration; resizeVideoAndPose(); drawPose(0); syncFrame();
+  });
+  vid.addEventListener("loadeddata", resizeVideoAndPose);
+  setupTimelineEvents();
+  window.addEventListener("resize", function() { resizeVideoAndPose(); resizeTimeline(); syncFrame(); });
+}
+
+// ── Streamlit render callback ──────────────────────────────────────
+function onRender(event) {
+  var args = event.detail.args;
+
+  NF = args.n_frames || 0;
+  PFPS = args.fps || 25;
+  durationMs = args.duration_ms || 1000;
+  prepartner-dictns = args.prepartner-dictns || [];
+  motionEnergy = args.motion_energy || [];
+  energyFps = args.energy_fps || 25;
+  var newPredIdx = args.current_pred_idx || 0;
+  segStartMs = args.segment_start_ms || 0;
+  segEndMs = args.segment_end_ms || 1000;
+
+  BC = args.body_conn || []; HC = args.hand_conn || [];
+  FL = args.face_lips || []; FLE = args.face_left_eye || [];
+  FRE = args.face_right_eye || []; FLB = args.face_left_brow || [];
+  FRB = args.face_right_brow || []; FO = args.face_oval || [];
+
+  // Only reset trim/zoom when prepartner-dictn actually changes
+  var predChanged = (newPredIdx !== prevPredIdx);
+  currentPredIdx = newPredIdx;
+  prevPredIdx = newPredIdx;
+
+  if (predChanged) {
+    var curPred = prepartner-dictns[currentPredIdx];
+    if (curPred) {
+      trimStartMs = curPred.start_ms; trimEndMs = curPred.end_ms;
+      origTrimStart = curPred.start_ms; origTrimEnd = curPred.end_ms;
+      var predDur = curPred.end_ms - curPred.start_ms;
+      var ctx = Math.max(2000, predDur * 3);
+      viewStartMs = Math.max(0, curPred.start_ms - ctx);
+      viewEndMs = Math.min(durationMs, curPred.end_ms + ctx);
+    } else {
+      viewStartMs = 0; viewEndMs = durationMs;
+    }
+  }
+
+  // Decode pose data
+  if (args.pos_b64 && NF > 0) { P = d64(args.pos_b64); CF = d64(args.conf_b64); }
+
+  // Set video — only update src if changed
+  if (args.video_b64 && vid) {
+    var newSrc = "data:video/mp4;base64," + args.video_b64;
+    if (vid.getAttribute("src") !== newSrc) vid.src = newSrc;
+  }
+
+  energyImageData = null; // invalidate energy cache (motion energy may have changed)
+  resizeTimeline();
+  updateZoomLabel();
+  drawTimeline(segStartMs);
+  if (P) drawPose(0);
+
+  window.Streamlit.setFrameHeight(document.getElementById("wrapper").scrollHeight);
+}
+
+// Boot
+init();
+window.Streamlit.events.addEventListener(window.Streamlit.RENDER_EVENT, onRender);
+window.Streamlit.setComponentReady();
+})();
+</script>
+</body>
+</html>

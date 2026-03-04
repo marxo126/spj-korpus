@@ -1903,6 +1903,67 @@ _SYNCED_ANIM_TEMPLATE = _Template(
 )
 
 
+def encode_pose_data(
+    pose_data: np.ndarray,
+    conf_data: np.ndarray,
+    frame_start: int,
+    frame_end: int,
+) -> tuple[str, str, int]:
+    """Encode a pose segment as base64 strings for JS rendering.
+
+    Args:
+        pose_data: Full pose array — (T,1,543,3) or (T,543,3).
+        conf_data: Full confidence array — various shapes handled.
+        frame_start: First frame index (inclusive).
+        frame_end: Last frame index (exclusive).
+
+    Returns:
+        (pos_b64, conf_b64, n_frames) — base64-encoded xy coords,
+        base64-encoded confidence, and frame count.
+    """
+    import base64
+
+    n_frames = max(0, frame_end - frame_start)
+    if n_frames == 0:
+        return "", "", 0
+
+    if pose_data.ndim == 4:
+        seg_xy = pose_data[frame_start:frame_end, 0, :, :2].copy()
+    else:
+        seg_xy = pose_data[frame_start:frame_end, :, :2].copy()
+
+    if conf_data.ndim == 4:
+        seg_conf = conf_data[frame_start:frame_end, 0, :, 0].copy()
+    elif conf_data.ndim == 3:
+        seg_conf = (
+            conf_data[frame_start:frame_end, 0, :].copy()
+            if conf_data.shape[1] == 1
+            else conf_data[frame_start:frame_end, :, 0].copy()
+        )
+    else:
+        seg_conf = conf_data[frame_start:frame_end].copy()
+
+    pos_b64 = base64.b64encode(
+        seg_xy.astype(np.float32).tobytes()
+    ).decode("ascii")
+    conf_b64 = base64.b64encode(
+        seg_conf.astype(np.float32).tobytes()
+    ).decode("ascii")
+    return pos_b64, conf_b64, n_frames
+
+
+CONNECTION_ARRAYS: dict[str, list] = {
+    "body_conn": BODY_CONNECTIONS,
+    "hand_conn": HAND_CONNECTIONS,
+    "face_lips": _FACE_LIPS,
+    "face_left_eye": _FACE_LEFT_EYE,
+    "face_right_eye": _FACE_RIGHT_EYE,
+    "face_left_brow": _FACE_LEFT_EYEBROW,
+    "face_right_brow": _FACE_RIGHT_EYEBROW,
+    "face_oval": _FACE_OVAL,
+}
+
+
 def synced_video_pose_html(
     video_bytes: bytes,
     pose_data: np.ndarray,
@@ -1921,54 +1982,25 @@ def synced_video_pose_html(
     import base64
     import json
 
-    n_frames = max(0, frame_end - frame_start)
+    pos_b64, conf_b64, n_frames = encode_pose_data(
+        pose_data, conf_data, frame_start, frame_end,
+    )
     if n_frames == 0:
         return (
             '<div style="color:#fafafa;text-align:center;padding:40px">'
             'No frames in segment</div>'
         )
 
-    # ── Extract segment pose data ────────────────────────────────────
-    if pose_data.ndim == 4:
-        seg_xy = pose_data[frame_start:frame_end, 0, :, :2].copy()
-    else:
-        seg_xy = pose_data[frame_start:frame_end, :, :2].copy()
-
-    if conf_data.ndim == 4:
-        seg_conf = conf_data[frame_start:frame_end, 0, :, 0].copy()
-    elif conf_data.ndim == 3:
-        seg_conf = (
-            conf_data[frame_start:frame_end, 0, :].copy()
-            if conf_data.shape[1] == 1
-            else conf_data[frame_start:frame_end, :, 0].copy()
-        )
-    else:
-        seg_conf = conf_data[frame_start:frame_end].copy()
-
-    # ── Viewport: full video frame ───────────────────────────────────
-    # MediaPipe coordinates are normalised to [0,1] within the video
-    # frame.  Using the full frame as viewport maps the skeleton exactly
-    # where it appears in the adjacent video panel.
-    vx_min, vx_max = 0.0, 1.0
-    vy_min, vy_max = 0.0, 1.0
-
-    # ── Encode binary data ───────────────────────────────────────────
-    pos_b64 = base64.b64encode(
-        seg_xy.astype(np.float32).tobytes()
-    ).decode("ascii")
-    conf_b64 = base64.b64encode(
-        seg_conf.astype(np.float32).tobytes()
-    ).decode("ascii")
     video_b64 = base64.b64encode(video_bytes).decode("ascii")
 
     return _SYNCED_ANIM_TEMPLATE.substitute(
         n_frames=n_frames,
         fps=fps,
         fps_display=f"{fps:.0f}",
-        vx_min=vx_min,
-        vx_max=vx_max,
-        vy_min=vy_min,
-        vy_max=vy_max,
+        vx_min=0.0,
+        vx_max=1.0,
+        vy_min=0.0,
+        vy_max=1.0,
         pos_b64=pos_b64,
         conf_b64=conf_b64,
         video_b64=video_b64,
