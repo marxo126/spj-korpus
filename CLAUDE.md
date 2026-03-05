@@ -252,7 +252,7 @@ Python: `from spj.pose import apple_vision_available, extract_pose_apple, extrac
 
 ## Output License
 
-**CC BY-NC-SA 4.0** — required for compatibility with Corpus NGT (ShareAlike clause).
+**Non-Commercial Open Source** — free to use, modify, and distribute for non-commercial purposes. See LICENSE.
 
 ---
 

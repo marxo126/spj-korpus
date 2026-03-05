@@ -20,7 +20,7 @@ INVENTORY_CSV = DATA_DIR / "inventory.csv"
 POSE_DIR = DATA_DIR / "pose"
 ANNOTATIONS_DIR = DATA_DIR / "annotations"
 
-st.header("🗂 EAF Manager")
+st.header("3. 🗂 EAF Manager")
 st.caption("Page 3/10 · Create ELAN annotation files (.eaf) ready for human annotation.")
 with st.expander("ℹ️ How to use this page", expanded=False):
     st.markdown("""

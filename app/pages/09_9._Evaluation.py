@@ -18,7 +18,7 @@ SPLITS_DIR   = TRAINING_DIR / "splits"
 MODELS_DIR   = DATA_DIR / "models"
 EVAL_DIR     = DATA_DIR / "evaluations"
 
-st.header("📊 Evaluation")
+st.header("9. 📊 Evaluation")
 st.caption("Page 9/10 · Evaluate trained models on the test split and compare performance.")
 with st.expander("ℹ️ How to use this page", expanded=False):
     st.markdown("""

@@ -1,0 +1,39 @@
+# Changelog
+
+## [Unreleased]
+
+### Added
+- Video-editor-style razor cut tool — split predictions into visually separate blocks with gap
+- Alt+drag to create new label regions on timeline
+- Timeline tooltips for predictions, trim handles, cut points
+- Subtitle track display on timeline
+- Right-click to delete cut points
+- Keyboard shortcuts: C (cut at playhead), X (undo last cut)
+
+### Changed
+- Timeline cut visualization: split blocks with white borders replace overlay lines
+- Scroll behavior: regular scroll = pan, Ctrl/Cmd+scroll = zoom (trackpad-native)
+- Pose rendering: smaller dots, lower confidence threshold for hands (0.01)
+
+## [0.1.0] - 2026-03-05
+
+### Added
+- 12-page Streamlit pipeline UI (Inventory, Pose Extraction, EAF Manager, Download, PreAnnotation, Subtitles, Training Data, Training, Evaluation, Inference, Assistant, AI Review)
+- MediaPipe Holistic pose extraction with Metal GPU acceleration (~400 fps)
+- Apple Vision backend for pose extraction (~67 fps)
+- PoseTransformerEncoder model (500K params, 3-layer Transformer)
+- Category transfer learning — two-phase fine-tuning (24.9% top-1 on 516 signs)
+- Self-supervised masked pose pre-training (ssl_pretrain.py)
+- Three landmark presets: compact (96), extended (148), full (174)
+- Active learning orchestrator with milestone-based retraining
+- EAF harvest — bulk import human annotations from ELAN files
+- Multi-source video downloader (YouTube, dictionary CSV, FTP, HTTP)
+- AI Review page with synced video+pose player, trim handles, approve/correct workflow
+- Interactive timeline component with zoom, pan, prediction selection
+- MCP server exposing 12 pipeline tools for Claude Code integration
+- AI Assistant page for annotator chat (Anthropic API)
+- SPJ glossary management with ID-glosses and Slovak word forms
+- ELAN tier convention: S1_Gloss_RH/LH, AI_Gloss_RH/LH, AI_Confidence
+- Training data export with NPZ segments and manifest
+- Model evaluation with confusion matrices, per-class F1, model comparison
+- Batch inference with predictions written to EAF AI tiers

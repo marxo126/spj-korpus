@@ -17,7 +17,7 @@ POSE_DIR        = DATA_DIR / "pose"
 ANNOTATIONS_DIR = DATA_DIR / "annotations"
 MODELS_DIR      = DATA_DIR / "models"
 
-st.header("🔮 Inference")
+st.header("10. 🔮 Inference")
 st.caption(
     "Page 10/10 · Predict glosses on new videos, write results to ELAN EAF files."
 )

@@ -884,7 +884,7 @@ _PAIRINGS_FLOAT_COLS = [
 ]
 _PAIRINGS_STR_COLS = [
     "pairing_id", "segment_id", "video_path", "pose_path", "hand",
-    "word", "gloss_id", "status", "suggestion_gloss", "note",
+    "word", "gloss_id", "status", "suggestion_gloss", "note", "mouthing",
 ]
 
 # Pairing status constants
@@ -914,6 +914,7 @@ def make_pairing_dict(
     status: str = PST_PENDING,
     suggestion_gloss: str = "",
     suggestion_confidence: float = 0.0,
+    mouthing: str = "",
 ) -> dict:
     """Build a single pairing dict matching the pairings CSV schema."""
     return {
@@ -934,6 +935,7 @@ def make_pairing_dict(
         "suggestion_confidence": suggestion_confidence,
         "fps": float(fps),
         "note": note,
+        "mouthing": mouthing,
     }
 
 
