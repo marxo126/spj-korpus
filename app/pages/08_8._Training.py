@@ -715,9 +715,25 @@ with tab_train:
                     _td["label_smoothing"] if _is_transfer else 0.0,
                     step=0.05, key="tr_label_smooth",
                 )
+                augment = tc1.checkbox(
+                    "Data augmentation (10x)",
+                    value=True,
+                    key="tr_augment",
+                    help="On-the-fly augmentation: temporal crop, speed variation, "
+                         "noise, scale jitter. Each sample produces 10 variants.",
+                )
+                n_augments = tc2.number_input(
+                    "Augment multiplier", 2, 20, 10,
+                    key="tr_n_augments",
+                    help="How many augmented variants per sample (1st is always original).",
+                ) if augment else 1
 
+            _aug_note = (
+                f" (x{n_augments} = **{len(train_df) * n_augments}** effective)"
+                if augment else ""
+            )
             st.caption(
-                f"Training: **{len(train_df)}** samples, "
+                f"Training: **{len(train_df)}** samples{_aug_note}, "
                 f"Validation: **{len(val_df)}** samples, "
                 f"Device: **MPS** (M4 Max)"
             )
@@ -759,6 +775,8 @@ with tab_train:
                     unfreeze_lr=unfreeze_lr,
                     patience=patience_val,
                     label_smoothing=label_smoothing,
+                    augment=augment,
+                    n_augments=n_augments,
                 )
 
                 state = TrainingState()

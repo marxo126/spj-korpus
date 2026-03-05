@@ -402,9 +402,42 @@ else:
     )
 
 # ------------------------------------------------------------------ #
+# Dual-view option (Kodifikacia side-by-side cameras)
+# ------------------------------------------------------------------ #
+split_dual = st.checkbox(
+    "Split dual-view videos (Kodifikacia)",
+    value=False,
+    help="Kodifikacia videos have two camera angles side by side. "
+         "Enable this to split each video and extract poses for both the "
+         "60-degree (frontal) and 90-degree (profile) views separately. "
+         "Output: {name}_60.pose and {name}_90.pose",
+)
+
+# Default crops for 1280x720 kodifikacia videos (dark divider at ~col 640)
+_DUAL_CROP_60 = (0, 0, 632, 720)      # left half — 60° frontal
+_DUAL_CROP_90 = (648, 0, 632, 720)    # right half — 90° profile
+
+# ------------------------------------------------------------------ #
 # Video selection
 # ------------------------------------------------------------------ #
 st.subheader("Select videos to extract")
+
+if split_dual:
+    # Auto-filter to kodifikacia videos only
+    _kod_mask = inv["path"].str.contains("kodifikacia", case=False, na=False)
+    _kod_inv = inv[_kod_mask]
+    if _kod_inv.empty:
+        st.warning("No Kodifikacia videos found in inventory. Dual-view split requires Kodifikacia source videos.")
+        st.stop()
+    st.info(f"Filtered to **{len(_kod_inv)}** Kodifikacia videos for dual-view extraction.")
+
+    # For dual-view, "done" means both _60.pose and _90.pose exist
+    def _dual_done(p: str) -> bool:
+        stem = Path(p).stem
+        return (POSE_DIR / f"{stem}_60.pose").exists() and (POSE_DIR / f"{stem}_90.pose").exists()
+
+    pending = _kod_inv[~_kod_inv["path"].apply(_dual_done)].copy()
+    done = _kod_inv[_kod_inv["path"].apply(_dual_done)].copy()
 
 if pending.empty and done.empty:
     st.success("No videos in inventory.")
@@ -528,16 +561,28 @@ if not _use_apple_vision:
 # Delete existing .pose files for re-extract selections
 for name in selected_names:
     if name not in _pending_set:
-        (POSE_DIR / f"{Path(name).stem}.pose").unlink(missing_ok=True)
+        stem = Path(name).stem
+        if split_dual:
+            (POSE_DIR / f"{stem}_60.pose").unlink(missing_ok=True)
+            (POSE_DIR / f"{stem}_90.pose").unlink(missing_ok=True)
+        else:
+            (POSE_DIR / f"{stem}.pose").unlink(missing_ok=True)
 
 video_paths = [Path(_path_by_name[name]) for name in selected_names]
-total = len(video_paths)
+
+# Dual-view: detect actual video height for crop rectangles
+if split_dual:
+    import cv2 as _cv2
+    _sample_cap = _cv2.VideoCapture(str(video_paths[0]))
+    _vid_h = int(_sample_cap.get(_cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+    _sample_cap.release()
+    _crop_60 = (0, 0, 632, _vid_h)
+    _crop_90 = (648, 0, 632, _vid_h)
+    total = len(video_paths) * 2  # each video → 2 pose files
+else:
+    total = len(video_paths)
 
 tmp_dir = Path(tempfile.mkdtemp(prefix="spj_pose_"))
-progress_files = {
-    str(vp): tmp_dir / f"{vp.stem}.progress"
-    for vp in video_paths
-}
 
 # Start executor — NOT in a `with` block so it stays alive across reruns
 # Select backend-specific worker, executor type, and third arg value
@@ -554,18 +599,49 @@ else:
     _ExecutorCls = ProcessPoolExecutor
     _third_arg = ""  # model_dir_str
 
-args_list = [
-    (str(vp), str(POSE_DIR / f"{vp.stem}.pose"), _third_arg,
-     str(progress_files[str(vp)]))
-    for vp in video_paths
-]
-if _use_apple_vision:
-    args_list = [a + (frame_concurrent,) for a in args_list]
+if split_dual:
+    # Two tasks per video: one for each crop (60° and 90°)
+    # Each task gets a unique key based on output path for progress tracking
+    args_list = []
+    progress_files = {}
+    _dual_task_labels: dict[str, str] = {}  # args_key → display label
+    for vp in video_paths:
+        for suffix, crop in [("_60", _crop_60), ("_90", _crop_90)]:
+            out_path = POSE_DIR / f"{vp.stem}{suffix}.pose"
+            task_key = str(out_path)  # unique per task
+            pf = tmp_dir / f"{vp.stem}{suffix}.progress"
+            progress_files[task_key] = pf
+            _dual_task_labels[task_key] = f"{vp.name} → {vp.stem}{suffix}.pose"
+            args_list.append(
+                (str(vp), str(out_path), _third_arg, str(pf), crop)
+            )
+    if _use_apple_vision:
+        args_list = [a + (frame_concurrent,) for a in args_list]
+else:
+    progress_files = {
+        str(vp): tmp_dir / f"{vp.stem}.progress"
+        for vp in video_paths
+    }
+    args_list = [
+        (str(vp), str(POSE_DIR / f"{vp.stem}.pose"), _third_arg,
+         str(progress_files[str(vp)]))
+        for vp in video_paths
+    ]
+    if _use_apple_vision:
+        args_list = [a + (frame_concurrent,) for a in args_list]
+
 executor = _ExecutorCls(max_workers=n_workers)
-futures_map = {
-    executor.submit(_worker_fn, args): Path(args[0])
-    for args in args_list
-}
+if split_dual:
+    # Use output path as unique task identifier (not input video — shared by 2 tasks)
+    futures_map = {
+        executor.submit(_worker_fn, args): Path(args[1])
+        for args in args_list
+    }
+else:
+    futures_map = {
+        executor.submit(_worker_fn, args): Path(args[0])
+        for args in args_list
+    }
 
 active_slots: dict[int, str] = {
     slot_i: str(vp)
