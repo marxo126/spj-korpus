@@ -3,6 +3,14 @@
 ## [Unreleased]
 
 ### Added
+- Dual-view video splitting for category-source — extract poses from both 60° and 90° camera angles separately
+- `crop` parameter on `extract_pose()` — crop frames in-memory before MediaPipe processing
+- `extract_pose_dual_view()` and `extract_pose_dual_view_batch()` in pose.py
+- Standalone script `tools/split_category-source_poses.py` for batch dual-view extraction
+- "Split dual-view" checkbox in Page 2 (Pose Extraction) — auto-filters to category-source videos
+- Data augmentation wired into `train_model()` via `AugmentedPoseDataset` (10x variants: temporal crop, speed, noise, scale)
+- `augment` and `n_augments` fields in `TrainingConfig`
+- Augmentation controls in Page 8 (Training) with effective sample count display
 - RH+LH unit grouping — auto-pair overlapping right/left hand prepartner-dictns as one review unit
 - Sign type dropdown per unit: Sign (default), Classifier, Compound
 - Classifier mode — each hand gets its own label independently

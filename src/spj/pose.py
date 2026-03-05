@@ -180,6 +180,7 @@ def extract_pose(
     model_dir: Path | None = None,
     n_concurrent: int = 1,
     use_gpu: bool | None = None,
+    crop: tuple[int, int, int, int] | None = None,
 ) -> dict:
     """Extract pose landmarks from a single video.
 
@@ -190,6 +191,9 @@ def extract_pose(
         model_dir: Override model storage directory.
         n_concurrent: How many parallel extract_pose calls are running right now
                       (used to size the per-worker frame buffer from free RAM).
+        crop: Optional (x, y, w, h) rectangle to crop each frame before
+              processing. Useful for dual-view videos where each half contains
+              a separate signer.
 
     Returns:
         Dict: frames, duration_sec, output_size_bytes, device.
@@ -215,14 +219,18 @@ def extract_pose(
     frame_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 1080
 
     _, total_frames = _probe_video_info(video_path, fps)
-    queue_size = _compute_queue_size(frame_w, frame_h, n_concurrent)
+    # Use cropped dimensions for queue sizing if crop is set
+    effective_w = crop[2] if crop else frame_w
+    effective_h = crop[3] if crop else frame_h
+    queue_size = _compute_queue_size(effective_w, effective_h, n_concurrent)
 
     # GPU safe only when one pipeline at a time — concurrent Metal CVPixelBuffer
     # allocation fails with -6662 (pool exhausted) when n_concurrent > 1
     if use_gpu is None:
         use_gpu = (n_concurrent == 1)
     pose_det, hand_det, face_det, device = _build_detectors(model_paths, use_gpu=use_gpu)
-    logger.info(f"[{video_path.name}] device={device} frames≈{total_frames} queue={queue_size}")
+    logger.info(f"[{video_path.name}] device={device} frames≈{total_frames} queue={queue_size}"
+                + (f" crop={crop}" if crop else ""))
 
     frame_q: queue.Queue = queue.Queue(maxsize=queue_size)
 
@@ -233,6 +241,9 @@ def extract_pose(
                 ret, frame = cap.read()
                 if not ret:
                     break
+                if crop:
+                    cx, cy, cw, ch = crop
+                    frame = frame[cy:cy + ch, cx:cx + cw]
                 rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
                 frame_q.put((rgba, int(idx * 1000 / fps)))
                 idx += 1
@@ -294,8 +305,10 @@ def _batch_worker(args: tuple) -> dict:
     Args (packed as tuple for pickling):
         video_path_str, output_path_str, model_dir_str, progress_file_str
         progress_file_str may be empty string (no progress reporting).
+        Optional 5th element: crop tuple (x, y, w, h) or None.
     """
-    video_path_str, output_path_str, model_dir_str, progress_file_str = args
+    video_path_str, output_path_str, model_dir_str, progress_file_str = args[:4]
+    crop = args[4] if len(args) > 4 else None
     video_path = Path(video_path_str)
     output_path = Path(output_path_str)
     model_dir = Path(model_dir_str) if model_dir_str else None
@@ -307,6 +320,7 @@ def _batch_worker(args: tuple) -> dict:
         model_dir=model_dir,
         n_concurrent=1,
         use_gpu=False,   # CPU/XNNPACK — stable for multi-process
+        crop=crop,
     )
 
 
@@ -323,7 +337,8 @@ def _metal_gpu_worker(args: tuple) -> dict:
     """
     import cv2
 
-    video_path_str, output_path_str, model_dir_str, progress_file_str = args
+    video_path_str, output_path_str, model_dir_str, progress_file_str = args[:4]
+    crop = args[4] if len(args) > 4 else None
     video_path = Path(video_path_str)
     output_path = Path(output_path_str)
     model_dir = Path(model_dir_str) if model_dir_str else None
@@ -359,6 +374,9 @@ def _metal_gpu_worker(args: tuple) -> dict:
                 ret, frame = cap.read()
                 if not ret:
                     break
+                if crop:
+                    cx, cy, cw, ch = crop
+                    frame = frame[cy:cy + ch, cx:cx + cw]
                 rgba = cv2.cvtColor(frame, cv2.COLOR_BGR2RGBA)
                 frame_q.put((rgba, int(ridx * 1000 / fps)))
                 ridx += 1
@@ -486,6 +504,273 @@ def extract_pose_batch(
             except Exception as exc:
                 logger.error(f"Failed {vpath.name}: {exc}")
                 results.append({"error": str(exc), "path": str(vpath)})
+    return results
+
+
+def extract_pose_dual_view(
+    video_path: Path,
+    output_dir: Path,
+    crop_left: tuple[int, int, int, int] = (0, 0, 632, 720),
+    crop_right: tuple[int, int, int, int] = (648, 0, 632, 720),
+    suffix_left: str = "_60",
+    suffix_right: str = "_90",
+    progress_callback: Optional[Callable[[float], None]] = None,
+    model_dir: Path | None = None,
+    use_gpu: bool | None = None,
+) -> list[dict]:
+    """Extract poses from a dual-view (split-screen) video.
+
+    category-source videos have two camera angles side by side (1280x720):
+    left half = ~60 deg frontal view, right half = ~90 deg profile view,
+    with a dark divider at cols 632-647.
+
+    This function calls extract_pose() twice (once per crop) and saves two
+    .pose files: ``{stem}{suffix_left}.pose`` and ``{stem}{suffix_right}.pose``.
+
+    Crop bounds are auto-adjusted to the actual frame height when it differs
+    from the default 720 (e.g. 1280x556 videos).
+
+    Args:
+        video_path: Input dual-view video.
+        output_dir: Directory for output .pose files.
+        crop_left: (x, y, w, h) for the left half.
+        crop_right: (x, y, w, h) for the right half.
+        suffix_left: Suffix appended to stem for left output.
+        suffix_right: Suffix appended to stem for right output.
+        progress_callback: Called with float in [0, 1] (0-0.5 for left, 0.5-1.0 for right).
+        model_dir: Override model storage directory.
+        use_gpu: Use Metal GPU (None = auto-detect).
+
+    Returns:
+        List of two result dicts (left, right).
+    """
+    import cv2
+
+    video_path = Path(video_path)
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stem = video_path.stem
+
+    # Probe actual frame height and adjust crops if needed
+    cap = cv2.VideoCapture(str(video_path))
+    if not cap.isOpened():
+        raise RuntimeError(f"Cannot open video: {video_path}")
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+    cap.release()
+
+    def _adjust_crop(crop: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+        x, y, w, h = crop
+        if h != actual_h:
+            h = actual_h
+        return (x, y, w, h)
+
+    adj_left = _adjust_crop(crop_left)
+    adj_right = _adjust_crop(crop_right)
+
+    results: list[dict] = []
+
+    # Left half (e.g. 60 deg frontal)
+    out_left = output_dir / f"{stem}{suffix_left}.pose"
+
+    def _prog_left(frac: float):
+        if progress_callback:
+            progress_callback(frac * 0.5)
+
+    res_left = extract_pose(
+        video_path, out_left,
+        progress_callback=_prog_left,
+        model_dir=model_dir,
+        use_gpu=use_gpu,
+        crop=adj_left,
+    )
+    res_left["view"] = "left"
+    res_left["suffix"] = suffix_left
+    results.append(res_left)
+
+    # Right half (e.g. 90 deg profile)
+    out_right = output_dir / f"{stem}{suffix_right}.pose"
+
+    def _prog_right(frac: float):
+        if progress_callback:
+            progress_callback(0.5 + frac * 0.5)
+
+    res_right = extract_pose(
+        video_path, out_right,
+        progress_callback=_prog_right,
+        model_dir=model_dir,
+        use_gpu=use_gpu,
+        crop=adj_right,
+    )
+    res_right["view"] = "right"
+    res_right["suffix"] = suffix_right
+    results.append(res_right)
+
+    return results
+
+
+def _dual_view_gpu_worker(args: tuple) -> dict:
+    """Thread worker for dual-view Metal GPU batch extraction.
+
+    Processes one video producing two .pose files (left + right crop).
+    Calls _metal_gpu_worker twice sequentially with different crops.
+    """
+    (video_path_str, output_dir_str, model_dir_str, progress_file_str,
+     crop_left, crop_right, suffix_left, suffix_right) = args
+
+    stem = Path(video_path_str).stem
+    output_dir = Path(output_dir_str)
+
+    results = []
+    for crop, suffix, label in [
+        (crop_left, suffix_left, "left"),
+        (crop_right, suffix_right, "right"),
+    ]:
+        out_path = str(output_dir / f"{stem}{suffix}.pose")
+        sub_args = (video_path_str, out_path, model_dir_str, "", crop)
+        res = _metal_gpu_worker(sub_args)
+        res["view"] = label
+        res["suffix"] = suffix
+        results.append(res)
+
+    # Write progress=1.0 for the video as a whole
+    if progress_file_str:
+        try:
+            Path(progress_file_str).write_text("1.0")
+        except Exception:
+            pass
+
+    return results
+
+
+def _dual_view_cpu_worker(args: tuple) -> dict:
+    """Process worker for dual-view CPU batch extraction.
+
+    Processes one video producing two .pose files (left + right crop).
+    """
+    (video_path_str, output_dir_str, model_dir_str, progress_file_str,
+     crop_left, crop_right, suffix_left, suffix_right) = args
+
+    stem = Path(video_path_str).stem
+    output_dir = Path(output_dir_str)
+
+    results = []
+    for crop, suffix, label in [
+        (crop_left, suffix_left, "left"),
+        (crop_right, suffix_right, "right"),
+    ]:
+        out_path = str(output_dir / f"{stem}{suffix}.pose")
+        sub_args = (video_path_str, out_path, model_dir_str, "", crop)
+        res = _batch_worker(sub_args)
+        res["view"] = label
+        res["suffix"] = suffix
+        results.append(res)
+
+    if progress_file_str:
+        try:
+            Path(progress_file_str).write_text("1.0")
+        except Exception:
+            pass
+
+    return results
+
+
+def extract_pose_dual_view_batch(
+    video_paths: list[Path],
+    output_dir: Path,
+    progress_dir: Path | None = None,
+    model_dir: Path | None = None,
+    n_workers: int | None = None,
+    use_gpu: bool = False,
+    crop_left: tuple[int, int, int, int] = (0, 0, 632, 720),
+    crop_right: tuple[int, int, int, int] = (648, 0, 632, 720),
+    suffix_left: str = "_60",
+    suffix_right: str = "_90",
+) -> list[dict]:
+    """Process multiple dual-view videos in parallel.
+
+    Each video produces two .pose files (left and right crops).
+    Uses the same executor strategy as extract_pose_batch():
+    ThreadPoolExecutor for GPU, ProcessPoolExecutor for CPU.
+
+    Crop heights are auto-adjusted per video based on actual frame height
+    (handles 1280x720 and 1280x556 category-source videos).
+
+    Args:
+        video_paths: Dual-view videos to process.
+        output_dir: Directory to write .pose files.
+        progress_dir: Optional directory for per-video .progress temp files.
+        model_dir: Override model directory.
+        n_workers: Parallel workers. Auto-scaled if None.
+        use_gpu: Use Metal GPU via ThreadPoolExecutor (default: False = CPU).
+        crop_left: (x, y, w, h) for the left half.
+        crop_right: (x, y, w, h) for the right half.
+        suffix_left: Suffix for left-view output files.
+        suffix_right: Suffix for right-view output files.
+
+    Returns:
+        List of result lists (each is [left_result, right_result]).
+        Failed videos included as [{'error': str, 'path': str}].
+    """
+    import cv2
+
+    if not video_paths:
+        return []
+
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-download models
+    ensure_models(model_dir)
+
+    # Build args — adjust crop height per video
+    args_list = []
+    for vpath in video_paths:
+        vpath = Path(vpath)
+        pfile = str(Path(progress_dir) / f"{vpath.stem}.progress") \
+                if progress_dir else ""
+
+        # Probe actual height to adjust crop bounds
+        cap = cv2.VideoCapture(str(vpath))
+        actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)) or 720
+        cap.release()
+
+        def _adj(crop: tuple[int, int, int, int], h: int) -> tuple[int, int, int, int]:
+            return (crop[0], crop[1], crop[2], h)
+
+        adj_l = _adj(crop_left, actual_h)
+        adj_r = _adj(crop_right, actual_h)
+
+        args_list.append((
+            str(vpath), str(output_dir),
+            str(model_dir) if model_dir else "",
+            pfile, adj_l, adj_r, suffix_left, suffix_right,
+        ))
+
+    # Select worker and executor
+    if use_gpu:
+        if n_workers is None:
+            # Cropped frames are 632px wide = "small" → 8 threads OK
+            n_workers = min(8, len(video_paths))
+        worker_fn = _dual_view_gpu_worker
+        ExecutorCls = ThreadPoolExecutor
+    else:
+        if n_workers is None:
+            n_workers = recommend_workers(len(video_paths))
+        worker_fn = _dual_view_cpu_worker
+        ExecutorCls = ProcessPoolExecutor
+
+    results: list[dict] = []
+    with ExecutorCls(max_workers=n_workers) as pool:
+        futures = {pool.submit(worker_fn, args): Path(args[0])
+                   for args in args_list}
+        for future in as_completed(futures):
+            vpath = futures[future]
+            try:
+                results.append(future.result())
+            except Exception as exc:
+                logger.error(f"Dual-view failed {vpath.name}: {exc}")
+                results.append([{"error": str(exc), "path": str(vpath)}])
+
     return results
 
 

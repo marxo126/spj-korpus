@@ -429,6 +429,8 @@ class TrainingConfig:
     unfreeze_lr: float = 3e-4       # Phase 2 learning rate
     patience: int = 0               # early stopping patience (0 = disabled)
     label_smoothing: float = 0.0    # cross-entropy label smoothing
+    augment: bool = True            # on-the-fly data augmentation
+    n_augments: int = 10            # augmented variants per sample (1st is original)
 
 
 @dataclass
@@ -519,8 +521,14 @@ def train_model(
         device = _get_device(config)
         logger.info("Training on device: %s", device)
 
-        # Datasets
-        train_ds = PoseSegmentDataset(train_df, npz_dir, label_encoder, config.max_seq_len)
+        # Datasets — augmented for training, plain for validation
+        if config.augment:
+            train_ds = AugmentedPoseDataset(
+                train_df, npz_dir, label_encoder, config.max_seq_len,
+                augment=True, n_augments=config.n_augments,
+            )
+        else:
+            train_ds = PoseSegmentDataset(train_df, npz_dir, label_encoder, config.max_seq_len)
         val_ds = PoseSegmentDataset(val_df, npz_dir, label_encoder, config.max_seq_len)
 
         if len(train_ds) == 0:
