@@ -281,6 +281,28 @@ Confirm all data-sharing agreements are signed with all partner organizations be
 
 **Active learning loop:** Page 10 → Page 12 review (or ELAN) → Page 7 re-export → Page 8 retrain.
 
+### Page 12: AI Review — Unit Grouping & Sign Types
+
+RH+LH predictions are **auto-paired** into review units when they overlap ≥100ms. The annotator reviews one unit at a time.
+
+**Sign types** (per unit, dropdown only shown for paired RH+LH units):
+
+| Type | Behavior | `note` field |
+|------|----------|-------------|
+| **Sign** (default) | Both hands get same label | `ai_review_approved` |
+| **Classifier** | Each hand gets its own label (two inputs) | `classifier` |
+| **Compound** | Links with next unit via shared ID | `compound:{stem}_{ms}` |
+
+**Key constants** in `12_12._AI_Review.py`:
+```python
+_ST_SIGN, _ST_CLASSIFIER, _ST_COMPOUND = "Sign", "Classifier", "Compound"
+_PAIR_OVERLAP_MS = 100  # minimum overlap to auto-pair RH+LH
+```
+
+**Session state keys:** `ar_unit_idx` (current unit), `_ar_compound_id` (active compound linking), `_ar_trims`/`_ar_cuts` (keyed by unit index).
+
+**Timeline:** `active_pred_indices` highlights all predictions in the current unit simultaneously. Trims and cuts apply to all active predictions.
+
 ---
 
 ## ML Pipeline Rules
