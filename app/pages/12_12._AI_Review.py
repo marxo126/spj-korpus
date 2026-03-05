@@ -62,6 +62,15 @@ _STATUS_ICONS = {
 _CLUSTER_MAX_GAP_MS = 15000  # max gap between predictions to group them
 _CLUSTER_MAX_DUR_MS = 45000  # max cluster duration
 
+# Sign type constants
+_ST_SIGN = "Sign"
+_ST_CLASSIFIER = "Classifier"
+_ST_COMPOUND = "Compound"
+_SIGN_TYPES = [_ST_SIGN, _ST_CLASSIFIER, _ST_COMPOUND]
+
+# Overlap threshold for pairing RH+LH predictions (ms)
+_PAIR_OVERLAP_MS = 100
+
 
 # ---------------------------------------------------------------------------
 # Caching helpers
@@ -163,6 +172,20 @@ def _fmt_ms(ms: int) -> str:
     return f"{ms / 1000.0:.1f}s"
 
 
+def _hand_label(hands: list[str]) -> str:
+    """Short hand label for display: 'RH+LH', 'RH', or 'LH'."""
+    if len(hands) == 2:
+        return "RH+LH"
+    return "RH" if hands[0] == "right" else "LH"
+
+
+def _gloss_placeholder(gloss_id: str, glossary) -> str:
+    """Build placeholder string like 'GLOSS-1 (word1, word2)' from glossary."""
+    entry = glossary.get_entry(gloss_id)
+    hint = ", ".join(entry.get("forms", [])) if entry else ""
+    return f"{gloss_id} ({hint})" if hint else gloss_id
+
+
 # ---------------------------------------------------------------------------
 # Prediction clustering — group nearby predictions to share one video extract
 # ---------------------------------------------------------------------------
@@ -248,6 +271,84 @@ def _build_dedup_set(pairings_df: pd.DataFrame) -> dict[tuple, dict]:
 
 
 # ---------------------------------------------------------------------------
+# Group overlapping RH+LH predictions into review units
+# ---------------------------------------------------------------------------
+
+def _group_predictions(preds: list[dict]) -> list[dict]:
+    """Group overlapping RH+LH predictions into review units.
+
+    Two predictions overlap if their time intersection is >= _PAIR_OVERLAP_MS.
+    Greedy matching: each RH finds best-overlapping LH, unmatched become solo.
+    """
+    rh = [(i, p) for i, p in enumerate(preds) if p["hand"] == "right"]
+    lh = [(i, p) for i, p in enumerate(preds) if p["hand"] == "left"]
+
+    used_lh: set[int] = set()
+    units: list[dict] = []
+
+    for ri, rp in rh:
+        best_li = -1
+        best_overlap = 0
+        for li, lp in lh:
+            if li in used_lh:
+                continue
+            overlap = min(rp["end_ms"], lp["end_ms"]) - max(rp["start_ms"], lp["start_ms"])
+            if overlap >= _PAIR_OVERLAP_MS and overlap > best_overlap:
+                best_overlap = overlap
+                best_li = li
+
+        if best_li >= 0:
+            used_lh.add(best_li)
+            lp = preds[best_li]
+            # Unit status: approved if ALL approved, skipped if all skipped
+            statuses = [
+                rp.get("review_status", _RST_PENDING),
+                lp.get("review_status", _RST_PENDING),
+            ]
+            if all(s == _RST_APPROVED for s in statuses):
+                rstatus = _RST_APPROVED
+            elif all(s == _RST_SKIPPED for s in statuses):
+                rstatus = _RST_SKIPPED
+            else:
+                rstatus = _RST_PENDING
+            units.append({
+                "pred_indices": [ri, best_li],
+                "hands": ["right", "left"],
+                "start_ms": min(rp["start_ms"], lp["start_ms"]),
+                "end_ms": max(rp["end_ms"], lp["end_ms"]),
+                "primary_gloss": rp["predicted_gloss"],
+                "primary_confidence": rp["prediction_confidence"],
+                "review_status": rstatus,
+            })
+        else:
+            units.append({
+                "pred_indices": [ri],
+                "hands": [rp["hand"]],
+                "start_ms": rp["start_ms"],
+                "end_ms": rp["end_ms"],
+                "primary_gloss": rp["predicted_gloss"],
+                "primary_confidence": rp["prediction_confidence"],
+                "review_status": rp.get("review_status", _RST_PENDING),
+            })
+
+    # Add unmatched LH predictions as solo units
+    for li, lp in lh:
+        if li not in used_lh:
+            units.append({
+                "pred_indices": [li],
+                "hands": [lp["hand"]],
+                "start_ms": lp["start_ms"],
+                "end_ms": lp["end_ms"],
+                "primary_gloss": lp["predicted_gloss"],
+                "primary_confidence": lp["prediction_confidence"],
+                "review_status": lp.get("review_status", _RST_PENDING),
+            })
+
+    units.sort(key=lambda u: u["start_ms"])
+    return units
+
+
+# ---------------------------------------------------------------------------
 # Find videos with AI predictions
 # ---------------------------------------------------------------------------
 
@@ -321,7 +422,7 @@ def _pop_undo() -> dict | None:
 # Page
 # ---------------------------------------------------------------------------
 
-st.header("12. 🔍 AI Prediction Review")
+st.header("12. \U0001f50d AI Prediction Review")
 st.caption(
     "Review AI-predicted glosses from inference (Page 10). "
     "Approve, correct, or skip each prediction. "
@@ -374,14 +475,13 @@ with col_sel:
     )
 
 vid = videos[selected_idx]
-# Reset prediction index if video changed
+# Reset state if video changed
 prev_stem = st.session_state.get("ar_video_stem")
 if prev_stem and prev_stem != vid["stem"]:
-    st.session_state.pop("ar_pred_idx", None)
-    st.session_state.pop("_ar_nav_target", None)
-    st.session_state.pop("ar_timeline_result", None)
-    st.session_state.pop("_ar_trims", None)
-    st.session_state.pop("_ar_cuts", None)
+    for _k in ("ar_unit_idx", "ar_pred_idx", "_ar_nav_target",
+                "ar_timeline_result", "_ar_trims", "_ar_cuts",
+                "_ar_compound_id", "ar_sign_type"):
+        st.session_state.pop(_k, None)
 st.session_state["ar_video_stem"] = vid["stem"]
 preds = _read_predictions_cached(vid["eaf_path"])
 
@@ -418,72 +518,90 @@ for p in preds:
         p["existing_mouthing"] = ""
 
 # ---------------------------------------------------------------------------
-# Prediction selector + navigation
+# Group predictions into review units (RH+LH pairs)
 # ---------------------------------------------------------------------------
 
-# Handle navigation from timeline component (prediction click)
+units = _group_predictions(preds)
+pred_idx_to_unit: dict[int, int] = {}
+for ui, u in enumerate(units):
+    for pi in u["pred_indices"]:
+        pred_idx_to_unit[pi] = ui
+
+# ---------------------------------------------------------------------------
+# Unit selector + navigation
+# ---------------------------------------------------------------------------
+
+# Handle navigation from timeline component (prediction click → map to unit)
 timeline_result = st.session_state.get("ar_timeline_result")
 if timeline_result and isinstance(timeline_result, dict) and timeline_result.get("mode") != "new_label":
     sel_idx = timeline_result.get("selected_pred_idx")
-    if sel_idx is not None and sel_idx != st.session_state.get("ar_pred_idx"):
-        st.session_state["_ar_nav_target"] = sel_idx
+    if sel_idx is not None:
+        target_unit = pred_idx_to_unit.get(sel_idx)
+        if target_unit is not None and target_unit != st.session_state.get("ar_unit_idx"):
+            st.session_state["_ar_nav_target"] = target_unit
 
 # Navigation staging key (same pattern as page 7 Review tab)
 if "_ar_nav_target" in st.session_state:
     nav_target = st.session_state.pop("_ar_nav_target")
-    st.session_state["ar_pred_idx"] = nav_target
+    st.session_state["ar_unit_idx"] = nav_target
 
-pred_labels = []
-for i, p in enumerate(preds):
-    icon = _STATUS_ICONS.get(p["review_status"], "\U0001f7e1")
-    hand_label = "RH" if p["hand"] == "right" else "LH"
+# Build unit labels
+unit_labels = []
+for i, u in enumerate(units):
+    icon = _STATUS_ICONS.get(u["review_status"], "\U0001f7e1")
+    hl = _hand_label(u["hands"])
     label = (
-        f"{icon} {hand_label} {_fmt_ms(p['start_ms'])}\u2192{_fmt_ms(p['end_ms'])} "
-        f"| {p['predicted_gloss']} ({p['prediction_confidence']:.0%})"
+        f"{icon} {hl} {_fmt_ms(u['start_ms'])}\u2192{_fmt_ms(u['end_ms'])} "
+        f"| {u['primary_gloss']} ({u['primary_confidence']:.0%})"
     )
-    pred_labels.append(label)
+    unit_labels.append(label)
 
-# Default to first pending prediction if no stored index
-if "ar_pred_idx" not in st.session_state:
+# Default to first pending unit if no stored index
+if "ar_unit_idx" not in st.session_state:
     default_idx = 0
-    for i, p in enumerate(preds):
-        if p["review_status"] == _RST_PENDING:
+    for i, u in enumerate(units):
+        if u["review_status"] == _RST_PENDING:
             default_idx = i
             break
-    st.session_state["ar_pred_idx"] = default_idx
+    st.session_state["ar_unit_idx"] = default_idx
 
 # Clamp to valid range
-max_idx = len(preds) - 1
+max_unit_idx = len(units) - 1
 try:
-    st.session_state["ar_pred_idx"] = int(st.session_state["ar_pred_idx"])
+    st.session_state["ar_unit_idx"] = int(st.session_state["ar_unit_idx"])
 except (ValueError, TypeError):
-    st.session_state["ar_pred_idx"] = 0
-if st.session_state["ar_pred_idx"] > max_idx:
-    st.session_state["ar_pred_idx"] = 0
+    st.session_state["ar_unit_idx"] = 0
+if st.session_state["ar_unit_idx"] > max_unit_idx:
+    st.session_state["ar_unit_idx"] = 0
 
-current_idx = st.selectbox(
-    "Prediction",
-    range(len(preds)),
-    format_func=lambda i: pred_labels[i],
-    key="ar_pred_idx",
+current_unit_idx = st.selectbox(
+    "Unit",
+    range(len(units)),
+    format_func=lambda i: unit_labels[i],
+    key="ar_unit_idx",
 )
 
-pred = preds[current_idx]
+unit = units[current_unit_idx]
+# Primary prediction (first in unit — typically RH)
+pred = preds[unit["pred_indices"][0]]
+# Active prediction indices for timeline highlighting
+active_pred_indices = unit["pred_indices"]
+is_paired = len(unit["hands"]) == 2
 
 # ---------------------------------------------------------------------------
-# Prediction info
+# Unit info + Sign Type
 # ---------------------------------------------------------------------------
 
-hand_label = "Right Hand" if pred["hand"] == "right" else "Left Hand"
-status_icon = _STATUS_ICONS.get(pred["review_status"], "\U0001f7e1")
+status_icon = _STATUS_ICONS.get(unit["review_status"], "\U0001f7e1")
+_display_hand = _hand_label(unit["hands"])
 
 st.markdown(
-    f"**{status_icon} {pred['predicted_gloss']}** ({pred['prediction_confidence']:.0%}) "
-    f"\u2014 {hand_label}  "
-    f"`{_fmt_ms(pred['start_ms'])}` \u2192 `{_fmt_ms(pred['end_ms'])}`"
+    f"**{status_icon} {unit['primary_gloss']}** ({unit['primary_confidence']:.0%}) "
+    f"\u2014 {_display_hand}  "
+    f"`{_fmt_ms(unit['start_ms'])}` \u2192 `{_fmt_ms(unit['end_ms'])}`"
 )
 
-if pred["review_status"] == _RST_APPROVED:
+if unit["review_status"] == _RST_APPROVED:
     _rev_info = (
         f"Already reviewed: word=`{pred['existing_word']}` "
         f"gloss=`{pred['existing_gloss']}`"
@@ -491,15 +609,40 @@ if pred["review_status"] == _RST_APPROVED:
     if pred.get("existing_mouthing"):
         _rev_info += f" mouthing=`{pred['existing_mouthing']}`"
     st.success(_rev_info)
-elif pred["review_status"] == _RST_SKIPPED:
+elif unit["review_status"] == _RST_SKIPPED:
     st.info("Previously skipped.")
+
+# Sign type dropdown (only meaningful for paired units)
+if is_paired:
+    sign_type = st.radio(
+        "Sign type", _SIGN_TYPES,
+        horizontal=True, key="ar_sign_type",
+        help=(
+            "**Sign**: both hands = one sign (default). "
+            "**Classifier**: each hand labeled independently. "
+            "**Compound**: links with next unit as one meaning."
+        ),
+    )
+else:
+    sign_type = _ST_SIGN
+
+# Show compound linking badge
+_active_compound = st.session_state.get("_ar_compound_id")
+if _active_compound:
+    c_info, c_cancel = st.columns([3, 1])
+    with c_info:
+        st.info(f"Linking compound `{_active_compound}` \u2014 next save will link to this compound.")
+    with c_cancel:
+        if st.button("Cancel compound"):
+            st.session_state.pop("_ar_compound_id", None)
+            st.rerun()
 
 # ---------------------------------------------------------------------------
 # Load pose data + prepare video segment for timeline component
 # ---------------------------------------------------------------------------
 
-_orig_start = pred["start_ms"]
-_orig_end = pred["end_ms"]
+_orig_start = unit["start_ms"]
+_orig_end = unit["end_ms"]
 _pose_loaded = False
 
 try:
@@ -513,18 +656,22 @@ except Exception as exc:
 # Unified Timeline Component (video + pose + interactive timeline)
 # ---------------------------------------------------------------------------
 
-# Trim values — check persisted trims first, fall back to original prediction bounds
+# Trim values — check persisted trims first, fall back to unit bounds
 _trims = st.session_state.get("_ar_trims", {})
-if current_idx in _trims:
-    _use_start_ms, _use_end_ms = _trims[current_idx]
+if current_unit_idx in _trims:
+    _use_start_ms, _use_end_ms = _trims[current_unit_idx]
 else:
     _use_start_ms = _orig_start
     _use_end_ms = _orig_end
 
 if _pose_loaded:
     try:
-        # Find cluster of nearby predictions for stable switching
-        cluster_start, cluster_end = _find_prediction_cluster(preds, current_idx)
+        # Find cluster covering all active predictions (both hands)
+        cluster_start, cluster_end = _find_prediction_cluster(preds, active_pred_indices[0])
+        for _api in active_pred_indices[1:]:
+            _cs, _ce = _find_prediction_cluster(preds, _api)
+            cluster_start = min(cluster_start, _cs)
+            cluster_end = max(cluster_end, _ce)
 
         # Add 1s padding to cluster bounds
         cluster_start = max(0, cluster_start - 1000)
@@ -580,8 +727,8 @@ if _pose_loaded:
                 and s["start_ms"] < display_end_ms + 2000
             ]
 
-            # Restore persisted cut points for this prediction
-            _persisted_cuts = st.session_state.get("_ar_cuts", {}).get(current_idx, [])
+            # Restore persisted cut points for this unit
+            _persisted_cuts = st.session_state.get("_ar_cuts", {}).get(current_unit_idx, [])
 
             result = spj_timeline(
                 video_b64=video_b64,
@@ -593,7 +740,8 @@ if _pose_loaded:
                 predictions=preds_json,
                 motion_energy=motion_energy,
                 energy_fps=energy_fps,
-                current_pred_idx=current_idx,
+                current_pred_idx=active_pred_indices[0],
+                active_pred_indices=active_pred_indices,
                 connections=CONNECTION_ARRAYS,
                 segment_start_ms=display_start_ms,
                 segment_end_ms=display_end_ms,
@@ -613,23 +761,23 @@ if _pose_loaded:
                 _tr_s = result.get("trim_start_ms")
                 _tr_e = result.get("trim_end_ms")
                 _tl_sel = result.get("selected_pred_idx")
-                if (_tl_sel == current_idx and
+                if (_tl_sel in active_pred_indices and
                     _tr_s is not None and _tr_e is not None and _tr_s < _tr_e):
                     _use_start_ms = int(_tr_s)
                     _use_end_ms = int(_tr_e)
-                    # Persist trim for this prediction
+                    # Persist trim for this unit
                     trims = st.session_state.setdefault("_ar_trims", {})
-                    trims[current_idx] = (_use_start_ms, _use_end_ms)
-                # Persist cut points for this prediction (cap at 20 entries)
+                    trims[current_unit_idx] = (_use_start_ms, _use_end_ms)
+                # Persist cut points for this unit (cap at 20 entries)
                 _res_cuts = result.get("cut_points_ms") or []
                 cuts_store = st.session_state.setdefault("_ar_cuts", {})
                 if _res_cuts:
-                    cuts_store[current_idx] = [int(c) for c in _res_cuts]
+                    cuts_store[current_unit_idx] = [int(c) for c in _res_cuts]
                     if len(cuts_store) > 20:
-                        oldest = min(k for k in cuts_store if k != current_idx)
+                        oldest = min(k for k in cuts_store if k != current_unit_idx)
                         cuts_store.pop(oldest, None)
                 else:
-                    cuts_store.pop(current_idx, None)
+                    cuts_store.pop(current_unit_idx, None)
         else:
             st.warning("Could not extract video segment.")
     except Exception as exc:
@@ -710,42 +858,52 @@ if _cut_points:
             if _all_ok and _resolved:
                 stem = vid["stem"]
                 p_fps_val = vid["fps"]
-                hand = pred["hand"]
-                # Only annotate trim if overall bounds differ from prediction
-                _pred_trimmed = (
-                    _use_start_ms != pred["start_ms"]
-                    or _use_end_ms != pred["end_ms"]
+                # Check for active compound linking
+                _cut_compound = st.session_state.get("_ar_compound_id")
+                # Only annotate trim if overall bounds differ from unit
+                _unit_trimmed = (
+                    _use_start_ms != unit["start_ms"]
+                    or _use_end_ms != unit["end_ms"]
                 )
                 rows: list[dict] = []
                 for si, ((seg_s, seg_e), (word, gloss_id)) in enumerate(
                     zip(segments, _resolved)
                 ):
-                    suffix = "_R" if si == 0 else "_C"
-                    pid_start = pred["start_ms"] if si == 0 else seg_s
-                    pairing_id = f"{stem}_{pid_start:08d}_{hand[0]}{suffix}"
-                    note = "ai_review_cut"
-                    if _pred_trimmed:
-                        note += f"|trimmed_{pred['start_ms']}-{pred['end_ms']}"
+                    for pi in active_pred_indices:
+                        p = preds[pi]
+                        hand = p["hand"]
+                        suffix = "_R" if si == 0 and pi == active_pred_indices[0] else "_C"
+                        pid_start = p["start_ms"] if si == 0 else seg_s
+                        pairing_id = f"{stem}_{pid_start:08d}_{hand[0]}{suffix}"
+                        note = "ai_review_cut"
+                        if _cut_compound:
+                            note += f"|compound:{_cut_compound}"
+                        if _unit_trimmed:
+                            note += f"|trimmed_{p['start_ms']}-{p['end_ms']}"
 
-                    rows.append(make_pairing_dict(
-                        pairing_id=pairing_id,
-                        segment_id=f"{stem}_ai",
-                        video_path=vid["video_path"],
-                        pose_path=vid["pose_path"],
-                        hand=hand,
-                        sign_start_ms=seg_s,
-                        sign_end_ms=seg_e,
-                        sign_frame_start=int(seg_s * p_fps_val / 1000),
-                        sign_frame_end=int(seg_e * p_fps_val / 1000),
-                        fps=p_fps_val,
-                        note=note,
-                        word=word,
-                        gloss_id=gloss_id,
-                        status=PST_PAIRED,
-                        suggestion_gloss=pred["predicted_gloss"],
-                        suggestion_confidence=pred["prediction_confidence"],
-                        mouthing=_cut_mouths[si].strip(),
-                    ))
+                        rows.append(make_pairing_dict(
+                            pairing_id=pairing_id,
+                            segment_id=f"{stem}_ai",
+                            video_path=vid["video_path"],
+                            pose_path=vid["pose_path"],
+                            hand=hand,
+                            sign_start_ms=seg_s,
+                            sign_end_ms=seg_e,
+                            sign_frame_start=int(seg_s * p_fps_val / 1000),
+                            sign_frame_end=int(seg_e * p_fps_val / 1000),
+                            fps=p_fps_val,
+                            note=note,
+                            word=word,
+                            gloss_id=gloss_id,
+                            status=PST_PAIRED,
+                            suggestion_gloss=p["predicted_gloss"],
+                            suggestion_confidence=p["prediction_confidence"],
+                            mouthing=_cut_mouths[si].strip(),
+                        ))
+
+                # Clear compound state if it was linked
+                if _cut_compound:
+                    st.session_state.pop("_ar_compound_id", None)
 
                 # Batch upsert — single CSV write
                 pdf = _get_pairings_df()
@@ -760,7 +918,7 @@ if _cut_points:
 
                 # Clear persisted cuts
                 cuts_store = st.session_state.get("_ar_cuts", {})
-                cuts_store.pop(current_idx, None)
+                cuts_store.pop(current_unit_idx, None)
                 _advance_after_save()
                 st.rerun()
 
@@ -769,7 +927,7 @@ if _cut_points:
             # Force timeline to re-render without cuts
             st.session_state.pop("ar_timeline_result", None)
             cuts_store = st.session_state.get("_ar_cuts", {})
-            cuts_store.pop(current_idx, None)
+            cuts_store.pop(current_unit_idx, None)
             st.rerun()
 
 # ---------------------------------------------------------------------------
@@ -848,16 +1006,16 @@ if _is_new_label:
             st.rerun()
 
 # ---------------------------------------------------------------------------
-# Action buttons
+# Action helpers
 # ---------------------------------------------------------------------------
 
-def _next_pending_idx() -> int | None:
-    """Find next pending prediction after current index."""
-    for i in range(current_idx + 1, len(preds)):
-        if preds[i]["review_status"] == _RST_PENDING:
+def _next_pending_unit() -> int | None:
+    """Find next pending unit after current index."""
+    for i in range(current_unit_idx + 1, len(units)):
+        if units[i]["review_status"] == _RST_PENDING:
             return i
-    for i in range(0, current_idx):
-        if preds[i]["review_status"] == _RST_PENDING:
+    for i in range(0, current_unit_idx):
+        if units[i]["review_status"] == _RST_PENDING:
             return i
     return None
 
@@ -879,49 +1037,87 @@ def _upsert_pairing(row: dict) -> None:
 
 
 def _advance_after_save() -> None:
-    """Clear persisted trim and advance to next pending prediction."""
+    """Clear persisted trim and advance to next pending unit."""
     trims = st.session_state.get("_ar_trims", {})
-    trims.pop(current_idx, None)
-    nxt = _next_pending_idx()
+    trims.pop(current_unit_idx, None)
+    nxt = _next_pending_unit()
     if nxt is not None:
         st.session_state["_ar_nav_target"] = nxt
 
 
-def _write_pairing(word: str, gloss_id: str, status: str, note: str, mouthing: str = "") -> None:
-    """Write a pairing row using trimmed timestamps."""
+def _write_unit_pairings(
+    word: str, gloss_id: str, status: str, note: str,
+    mouthing: str = "", overrides: dict[str, dict] | None = None,
+) -> None:
+    """Write pairing rows for all predictions in the current unit.
+
+    Args:
+        overrides: Per-hand overrides for classifier mode.
+            e.g. {"right": {"word": "x", "gloss_id": "X-1"}, "left": {...}}
+    """
     stem = vid["stem"]
     p_fps_val = vid["fps"]
-    hand = pred["hand"]
-
-    # Read fresh trim values from session state (set after spj_timeline returns)
     start_ms = st.session_state.get("_ar_use_start_ms", _orig_start)
     end_ms = st.session_state.get("_ar_use_end_ms", _orig_end)
-    if start_ms != pred["start_ms"] or end_ms != pred["end_ms"]:
-        note = f"{note}|trimmed_{pred['start_ms']}-{pred['end_ms']}"
 
-    # Use ORIGINAL prediction start for pairing_id so dedup key matches
-    pairing_id = f"{stem}_{pred['start_ms']:08d}_{hand[0]}_R"
+    rows: list[dict] = []
+    for pi in active_pred_indices:
+        p = preds[pi]
+        hand = p["hand"]
 
-    row = make_pairing_dict(
-        pairing_id=pairing_id,
-        segment_id=f"{stem}_ai",
-        video_path=vid["video_path"],
-        pose_path=vid["pose_path"],
-        hand=hand,
-        sign_start_ms=start_ms,
-        sign_end_ms=end_ms,
-        sign_frame_start=int(start_ms * p_fps_val / 1000),
-        sign_frame_end=int(end_ms * p_fps_val / 1000),
-        fps=p_fps_val,
-        note=note,
-        word=word,
-        gloss_id=gloss_id,
-        status=status,
-        suggestion_gloss=pred["predicted_gloss"],
-        suggestion_confidence=pred["prediction_confidence"],
-        mouthing=mouthing,
-    )
-    _upsert_pairing(row)
+        pred_note = note
+        if start_ms != unit["start_ms"] or end_ms != unit["end_ms"]:
+            pred_note = f"{note}|trimmed_{p['start_ms']}-{p['end_ms']}"
+
+        # Per-hand overrides for classifier mode
+        if overrides and hand in overrides:
+            w = overrides[hand].get("word", word)
+            g = overrides[hand].get("gloss_id", gloss_id)
+            m = overrides[hand].get("mouthing", mouthing)
+        else:
+            w, g, m = word, gloss_id, mouthing
+
+        # Use ORIGINAL prediction start for pairing_id so dedup key matches
+        pairing_id = f"{stem}_{p['start_ms']:08d}_{hand[0]}_R"
+
+        rows.append(make_pairing_dict(
+            pairing_id=pairing_id,
+            segment_id=f"{stem}_ai",
+            video_path=vid["video_path"],
+            pose_path=vid["pose_path"],
+            hand=hand,
+            sign_start_ms=start_ms,
+            sign_end_ms=end_ms,
+            sign_frame_start=int(start_ms * p_fps_val / 1000),
+            sign_frame_end=int(end_ms * p_fps_val / 1000),
+            fps=p_fps_val,
+            note=pred_note,
+            word=w,
+            gloss_id=g,
+            status=status,
+            suggestion_gloss=p["predicted_gloss"],
+            suggestion_confidence=p["prediction_confidence"],
+            mouthing=m,
+        ))
+
+    # Batch upsert — single CSV write
+    pdf = _get_pairings_df()
+    pids = {r["pairing_id"] for r in rows}
+    existing_pids: set[str] = set()
+    if not pdf.empty:
+        mask = pdf["pairing_id"].isin(pids)
+        for _, prev in pdf[mask].iterrows():
+            _push_undo(prev["pairing_id"], prev.to_dict())
+            existing_pids.add(prev["pairing_id"])
+        pdf = pdf[~mask]
+    # Push undo for new (non-existing) pairing_ids
+    for r in rows:
+        if r["pairing_id"] not in existing_pids:
+            _push_undo(r["pairing_id"], None)
+
+    new_df = pd.DataFrame(rows)
+    pdf = pd.concat([pdf, new_df], ignore_index=True) if not pdf.empty else new_df
+    _save_pairings(pdf)
     _advance_after_save()
 
 
@@ -938,41 +1134,6 @@ def _do_undo() -> bool:
         pdf = pd.concat([pdf, pd.DataFrame([previous])], ignore_index=True)
     _save_pairings(pdf)
     return True
-
-
-# Action row: [input] [Save] [Skip] [Undo] [<] [>]
-act_input, act_approve, act_skip, act_undo, act_prev, act_next = st.columns(
-    [2.5, 1, 0.8, 0.7, 0.4, 0.4],
-)
-with act_input:
-    _glossary = _get_glossary()
-    _cur_gloss = pred["predicted_gloss"]
-    _entry = _glossary.get_entry(_cur_gloss)
-    _words_hint = ", ".join(_entry.get("forms", [])) if _entry else ""
-    _placeholder = f"{_cur_gloss}"
-    if _words_hint:
-        _placeholder += f" ({_words_hint})"
-
-    correct_input = st.text_input(
-        "Gloss",
-        key="ar_correct_input",
-        placeholder=_placeholder,
-        label_visibility="collapsed",
-        help="Leave empty = approve AI prediction. Type to correct: word, GLOSS-ID, or word1, word2 (comma-separated meanings).",
-    )
-
-# Mouthing row — set default from existing pairing when prediction changes
-_mouth_default = pred.get("existing_mouthing", "")
-if st.session_state.get("_ar_mouth_pred_idx") != current_idx:
-    st.session_state["ar_mouthing_input"] = _mouth_default
-    st.session_state["_ar_mouth_pred_idx"] = current_idx
-mouthing_input = st.text_input(
-    "Mouthing",
-    key="ar_mouthing_input",
-    placeholder="Mouthing (e.g. látka, koberec)",
-    label_visibility="collapsed",
-    help="Slovak mouthing for this sign (lowercase). Different mouthings distinguish homonymous signs.",
-)
 
 
 def _resolve_gloss_input(raw: str, fallback_gloss: str, glossary) -> tuple[str, str]:
@@ -1005,21 +1166,119 @@ def _resolve_gloss_input(raw: str, fallback_gloss: str, glossary) -> tuple[str, 
     return parse_gloss_value(raw, glossary)
 
 
+# ---------------------------------------------------------------------------
+# Action buttons
+# ---------------------------------------------------------------------------
+
+# Gloss input — shared for Sign mode, or per-hand for Classifier
+_glossary = _get_glossary()
+_cur_gloss = pred["predicted_gloss"]
+_placeholder = _gloss_placeholder(_cur_gloss, _glossary)
+
+if sign_type == _ST_CLASSIFIER and is_paired:
+    # Two separate gloss inputs for classifier mode
+    cl_col_rh, cl_col_lh = st.columns(2)
+    with cl_col_rh:
+        rh_pred = preds[unit["pred_indices"][0]]
+        cl_rh_input = st.text_input(
+            "RH gloss",
+            key="ar_cl_rh",
+            placeholder=_gloss_placeholder(rh_pred["predicted_gloss"], _glossary),
+            help="Right hand gloss (independent of left hand)",
+        )
+    with cl_col_lh:
+        lh_pred = preds[unit["pred_indices"][1]]
+        cl_lh_input = st.text_input(
+            "LH gloss",
+            key="ar_cl_lh",
+            placeholder=_gloss_placeholder(lh_pred["predicted_gloss"], _glossary),
+            help="Left hand gloss (independent of right hand)",
+        )
+    # Shared mouthing for classifier
+    correct_input = ""  # not used in classifier mode
+else:
+    # Single gloss input for Sign/Compound modes
+    act_input_col, _ = st.columns([3, 1])
+    with act_input_col:
+        correct_input = st.text_input(
+            "Gloss",
+            key="ar_correct_input",
+            placeholder=_placeholder,
+            label_visibility="collapsed",
+            help="Leave empty = approve AI prediction. Type to correct: word, GLOSS-ID, or word1, word2 (comma-separated meanings).",
+        )
+
+# Mouthing row — set default from existing pairing when unit changes
+_mouth_default = pred.get("existing_mouthing", "")
+if st.session_state.get("_ar_mouth_unit_idx") != current_unit_idx:
+    st.session_state["ar_mouthing_input"] = _mouth_default
+    st.session_state["_ar_mouth_unit_idx"] = current_unit_idx
+mouthing_input = st.text_input(
+    "Mouthing",
+    key="ar_mouthing_input",
+    placeholder="Mouthing (e.g. l\u00e1tka, koberec)",
+    label_visibility="collapsed",
+    help="Slovak mouthing for this sign (lowercase). Different mouthings distinguish homonymous signs.",
+)
+
+# Action row: [Save] [Skip] [Undo] [<] [>]
+act_approve, act_skip, act_undo, act_prev, act_next = st.columns(
+    [1.2, 0.8, 0.7, 0.4, 0.4],
+)
+
 with act_approve:
-    _has_correction = bool(correct_input.strip())
+    if sign_type == _ST_CLASSIFIER and is_paired:
+        _has_correction = bool(cl_rh_input.strip()) or bool(cl_lh_input.strip())
+    else:
+        _has_correction = bool(correct_input.strip())
     _btn_label = "\u2705 Save (A)" if not _has_correction else "\u270f Save (A)"
+
     if st.button(_btn_label, use_container_width=True, type="primary"):
-        word, gloss = _resolve_gloss_input(correct_input.strip(), pred["predicted_gloss"], _get_glossary())
-        if not gloss and not word:
-            st.toast("Could not resolve gloss", icon="\u26a0\ufe0f")
+        _glossary = _get_glossary()
+
+        # Build note with compound linking
+        _active_cid = st.session_state.get("_ar_compound_id")
+        if sign_type == _ST_CLASSIFIER:
+            base_note = "classifier"
+            if _active_cid:
+                base_note += f"|compound:{_active_cid}"
+                st.session_state.pop("_ar_compound_id", None)
+        elif _active_cid:
+            base_note = f"ai_review_approved|compound:{_active_cid}"
+            st.session_state.pop("_ar_compound_id", None)
+        elif sign_type == _ST_COMPOUND and is_paired:
+            compound_id = f"{vid['stem']}_{unit['start_ms']}"
+            base_note = f"ai_review_approved|compound:{compound_id}"
+            st.session_state["_ar_compound_id"] = compound_id
         else:
-            note = "ai_review_corrected" if _has_correction else "ai_review_approved"
-            _write_pairing(word, gloss, PST_PAIRED, note, mouthing=mouthing_input.strip())
-            st.rerun()
+            base_note = "ai_review_corrected" if _has_correction else "ai_review_approved"
+
+        if sign_type == _ST_CLASSIFIER and is_paired:
+            # Resolve each hand independently
+            rh_pred = preds[unit["pred_indices"][0]]
+            lh_pred = preds[unit["pred_indices"][1]]
+            rh_w, rh_g = _resolve_gloss_input(cl_rh_input.strip(), rh_pred["predicted_gloss"], _glossary)
+            lh_w, lh_g = _resolve_gloss_input(cl_lh_input.strip(), lh_pred["predicted_gloss"], _glossary)
+            if (rh_w or rh_g) and (lh_w or lh_g):
+                overrides = {
+                    "right": {"word": rh_w, "gloss_id": rh_g},
+                    "left": {"word": lh_w, "gloss_id": lh_g},
+                }
+                _write_unit_pairings("", "", PST_PAIRED, base_note, mouthing=mouthing_input.strip(), overrides=overrides)
+                st.rerun()
+            else:
+                st.toast("Could not resolve one or both glosses", icon="\u26a0\ufe0f")
+        else:
+            word, gloss = _resolve_gloss_input(correct_input.strip(), pred["predicted_gloss"], _glossary)
+            if not gloss and not word:
+                st.toast("Could not resolve gloss", icon="\u26a0\ufe0f")
+            else:
+                _write_unit_pairings(word, gloss, PST_PAIRED, base_note, mouthing=mouthing_input.strip())
+                st.rerun()
 
 with act_skip:
     if st.button("\u23ed Skip (S)", use_container_width=True):
-        _write_pairing("", "", PST_SKIPPED, "ai_review_skipped", mouthing="")
+        _write_unit_pairings("", "", PST_SKIPPED, "ai_review_skipped", mouthing="")
         st.rerun()
 
 with act_undo:
@@ -1034,13 +1293,13 @@ with act_undo:
 
 with act_prev:
     if st.button("\u25c0", use_container_width=True):
-        new_idx = max(0, current_idx - 1)
+        new_idx = max(0, current_unit_idx - 1)
         st.session_state["_ar_nav_target"] = new_idx
         st.rerun()
 
 with act_next:
     if st.button("\u25b6", use_container_width=True):
-        new_idx = min(len(preds) - 1, current_idx + 1)
+        new_idx = min(len(units) - 1, current_unit_idx + 1)
         st.session_state["_ar_nav_target"] = new_idx
         st.rerun()
 
@@ -1078,9 +1337,9 @@ document.addEventListener('keydown', function(e) {
 # Summary stats
 # ---------------------------------------------------------------------------
 
-n_approved = sum(1 for p in preds if p["review_status"] == _RST_APPROVED)
-n_skipped = sum(1 for p in preds if p["review_status"] == _RST_SKIPPED)
-n_pending = sum(1 for p in preds if p["review_status"] == _RST_PENDING)
+n_approved = sum(1 for u in units if u["review_status"] == _RST_APPROVED)
+n_skipped = sum(1 for u in units if u["review_status"] == _RST_SKIPPED)
+n_pending = sum(1 for u in units if u["review_status"] == _RST_PENDING)
 
 st.divider()
 cols = st.columns(4)

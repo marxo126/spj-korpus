@@ -369,35 +369,38 @@ with tab_align:
 
     # Find subdirectories in data/videos/ that have matching .pose files
     VIDEO_DIR = DATA_DIR / "videos"
-    _gloss_dirs: list[str] = []
+    _VIDEO_EXTS = ("*.mp4", "*.mkv", "*.webm", "*.mov")
+    _gloss_dirs: list[tuple[str, bool]] = []  # (name, needs_recursive)
     if VIDEO_DIR.exists():
         for d in sorted(VIDEO_DIR.iterdir()):
             if d.is_dir():
-                vids = list(d.glob("*.mp4")) + list(d.glob("*.webm"))
-                if vids:
-                    _gloss_dirs.append(d.name)
+                flat = any(d.glob(ext) for ext in _VIDEO_EXTS)
+                if flat:
+                    _gloss_dirs.append((d.name, False))
+                elif any(d.rglob(_VIDEO_EXTS[0])):  # quick nested check
+                    _gloss_dirs.append((d.name, True))
 
     if _gloss_dirs:
-        sel_dir = st.selectbox(
+        sel_idx = st.selectbox(
             "Video folder",
-            options=_gloss_dirs,
+            options=range(len(_gloss_dirs)),
+            format_func=lambda i: _gloss_dirs[i][0],
             help="Subfolder inside data/videos/ containing glossed clips.",
             key="td_gloss_import_dir",
         )
+        sel_dir, _needs_recursive = _gloss_dirs[sel_idx]
         gloss_video_dir = VIDEO_DIR / sel_dir
+        _glob_fn = gloss_video_dir.rglob if _needs_recursive else gloss_video_dir.glob
 
-        # Count how many have poses
+        # Count how many have poses — batch check via set lookup
         _g_vids = sorted(
-            f for ext in ("*.mp4", "*.mkv", "*.webm", "*.mov")
-            for f in gloss_video_dir.glob(ext)
+            f for ext in _VIDEO_EXTS for f in _glob_fn(ext)
         )
-        _g_with_pose = [
-            v for v in _g_vids
-            if (POSE_DIR / f"{v.stem}.pose").exists()
-            and (POSE_DIR / f"{v.stem}.pose").stat().st_size > 0
-        ]
+        _pose_stems = {f.stem for f in POSE_DIR.glob("*.pose") if f.stat().st_size > 0}
+        _g_with_pose = [v for v in _g_vids if v.stem in _pose_stems]
+        _mode = " (recursive)" if _needs_recursive else ""
         st.caption(
-            f"**{len(_g_vids)}** video(s) in `{sel_dir}/`, "
+            f"**{len(_g_vids)}** video(s) in `{sel_dir}/`{_mode}, "
             f"**{len(_g_with_pose)}** with pose extracted"
         )
 
@@ -434,6 +437,7 @@ with tab_align:
                     existing_df=existing,
                     status=import_status,
                     split_words=split_words,
+                    recursive=_needs_recursive,
                 )
 
             if n_imported == 0:

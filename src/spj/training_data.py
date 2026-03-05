@@ -565,6 +565,7 @@ def import_single_sign_videos(
     label_source: str = "filename",
     status: str = "approved",
     split_words: bool = True,
+    recursive: bool = False,
 ) -> tuple[pd.DataFrame, int]:
     """Import single-sign videos as alignment rows (no subtitles needed).
 
@@ -587,6 +588,7 @@ def import_single_sign_videos(
         label_source: How to derive the label. Currently only "filename".
         status: Status to assign (default "approved" since these are clean clips).
         split_words: If True, also create per-word segments for multi-word labels.
+        recursive: If True, scan subdirectories recursively (rglob).
 
     Returns:
         (merged_df, n_imported) — full alignment table and count of new videos.
@@ -610,9 +612,10 @@ def import_single_sign_videos(
     n_videos = 0
 
     # Find all video files in video_dir
+    _glob = video_dir.rglob if recursive else video_dir.glob
     video_files = sorted(
         f for ext in ("*.mp4", "*.mkv", "*.webm", "*.mov")
-        for f in video_dir.glob(ext)
+        for f in _glob(ext)
     )
 
     for video_path in video_files:

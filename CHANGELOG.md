@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- RH+LH unit grouping — auto-pair overlapping right/left hand predictions as one review unit
+- Sign type dropdown per unit: Sign (default), Classifier, Compound
+- Classifier mode — each hand gets its own label independently
+- Compound mode — link two sequential units as one meaning (shared compound ID)
+- Multi-highlight timeline — paired predictions highlighted simultaneously with synced trims/cuts
 - Video-editor-style razor cut tool — split predictions into visually separate blocks with gap
 - Alt+drag to create new label regions on timeline
 - Timeline tooltips for predictions, trim handles, cut points
@@ -11,6 +16,8 @@
 - Keyboard shortcuts: C (cut at playhead), X (undo last cut)
 
 ### Changed
+- AI Review: prediction selectbox replaced with unit selectbox (shows RH+LH / RH / LH)
+- Timeline component: `active_pred_indices` parameter for multi-prediction highlighting
 - Timeline cut visualization: split blocks with white borders replace overlay lines
 - Scroll behavior: regular scroll = pan, Ctrl/Cmd+scroll = zoom (trackpad-native)
 - Pose rendering: smaller dots, lower confidence threshold for hands (0.01)
