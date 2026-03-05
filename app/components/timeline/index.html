@@ -163,6 +163,7 @@ var SPLIT_GAP = 3; // px gap between split blocks
 // Custom region (Alt+drag for new label)
 var customRegion = null; // {start_ms, end_ms, hand}
 var customDragStartMs = 0;
+var activePredIndices = [];
 
 // Cached energy layer (reuse single offscreen canvas)
 var energyCanvas = null, energyCacheKey = "";
@@ -384,12 +385,12 @@ function drawTimeline(phMs) {
     if (x2 < 0 || x1 > w) continue;
 
     var y = rowY(p.hand);
-    var isCurrent = (i === currentPredIdx);
+    var isActive = activePredIndices.indexOf(i) !== -1;
     var baseColor = p.hand === "right" ? "crimson" : "limegreen";
     var opacity = Math.max(0.3, Math.min(1.0, p.prepartner-dictn_confidence || 0.5));
 
-    // ── Split blocks for current prepartner-dictn with cuts ──
-    if (isCurrent && splitSegments.length > 0) {
+    // ── Split blocks for active prepartner-dictn with cuts ──
+    if (isActive && splitSegments.length > 0) {
       for (var si = 0; si < splitSegments.length; si++) {
         var seg = splitSegments[si];
         var sx1 = m2x(seg.start_ms), sx2 = m2x(seg.end_ms);
@@ -430,27 +431,31 @@ function drawTimeline(phMs) {
       tx.beginPath(); tx.moveTo(tx1, y-4); tx.lineTo(tx1+6, y-4); tx.lineTo(tx1, y+4); tx.fill();
       tx.beginPath(); tx.moveTo(tx2, y-4); tx.lineTo(tx2-6, y-4); tx.lineTo(tx2, y+4); tx.fill();
     } else {
-      // ── Normal single-block drawing (no cuts or non-current) ──
-      tx.globalAlpha = isCurrent ? 1.0 : opacity * 0.7;
+      // ── Normal single-block drawing (no cuts or non-active) ──
+      tx.globalAlpha = isActive ? 1.0 : opacity * 0.7;
       tx.fillStyle = baseColor;
       tx.fillRect(x1, y, Math.max(2, x2 - x1), TL_PRED_H);
       tx.globalAlpha = 1.0;
 
-      // Status border
-      var status = p.review_status || "pending";
-      if (status === "approved") {
-        tx.strokeStyle = "#00ff00"; tx.lineWidth = 2;
-      } else if (status === "skipped") {
-        tx.strokeStyle = "#666"; tx.lineWidth = 1;
+      // Status border (or white for active)
+      if (isActive) {
+        tx.strokeStyle = "#fff"; tx.lineWidth = 2;
       } else {
-        tx.strokeStyle = "#ffcc00"; tx.lineWidth = 1;
-        tx.setLineDash([3, 3]);
+        var status = p.review_status || "pending";
+        if (status === "approved") {
+          tx.strokeStyle = "#00ff00"; tx.lineWidth = 2;
+        } else if (status === "skipped") {
+          tx.strokeStyle = "#666"; tx.lineWidth = 1;
+        } else {
+          tx.strokeStyle = "#ffcc00"; tx.lineWidth = 1;
+          tx.setLineDash([3, 3]);
+        }
       }
       tx.strokeRect(x1, y, Math.max(2, x2 - x1), TL_PRED_H);
       tx.setLineDash([]);
 
-      // Current selection highlight + trim handles
-      if (isCurrent) {
+      // Active selection highlight + trim handles
+      if (isActive) {
         var tx1 = m2x(trimStartMs), tx2 = m2x(trimEndMs);
         tx.fillStyle = "rgba(255,255,255,0.06)";
         tx.fillRect(tx1, y - 2, Math.max(2, tx2 - tx1), TL_PRED_H + 4);
@@ -464,8 +469,8 @@ function drawTimeline(phMs) {
       // Gloss label
       var blockW = x2 - x1;
       if (blockW > 30) {
-        tx.fillStyle = isCurrent ? "#fff" : "rgba(255,255,255,0.8)";
-        tx.font = (isCurrent ? "bold " : "") + "10px -apple-system, sans-serif";
+        tx.fillStyle = isActive ? "#fff" : "rgba(255,255,255,0.8)";
+        tx.font = (isActive ? "bold " : "") + "10px -apple-system, sans-serif";
         tx.textBaseline = "middle";
         var label = p.predicted_gloss || "";
         var maxChars = Math.floor(blockW / 6);
@@ -568,12 +573,15 @@ function rebuildSplitSegments() {
 var NUM_SORT = function(a,b) { return a - b; };
 
 function hitTest(mouseX, mouseY) {
-  var p = prepartner-dictns[currentPredIdx];
-  if (p) {
-    var y = rowY(p.hand);
-    if (mouseY >= y - 4 && mouseY <= y + TL_PRED_H + 4) {
-      if (Math.abs(mouseX - ms2px(trimStartMs)) < 10) return "trimLeft";
-      if (Math.abs(mouseX - ms2px(trimEndMs)) < 10) return "trimRight";
+  // Check trim handles on all active prepartner-dictn rows
+  for (var ai = 0; ai < activePredIndices.length; ai++) {
+    var ap = prepartner-dictns[activePredIndices[ai]];
+    if (ap) {
+      var ay = rowY(ap.hand);
+      if (mouseY >= ay - 4 && mouseY <= ay + TL_PRED_H + 4) {
+        if (Math.abs(mouseX - ms2px(trimStartMs)) < 10) return "trimLeft";
+        if (Math.abs(mouseX - ms2px(trimEndMs)) < 10) return "trimRight";
+      }
     }
   }
 
@@ -599,8 +607,8 @@ function xToMs(x) {
 // ── selectPrepartner-dictn: internal switch for in-range, sendValue for out-of-range ──
 function selectPrepartner-dictn(idx) {
   if (idx < 0 || idx >= prepartner-dictns.length) return;
-  // Guard: clicking the same prepartner-dictn does nothing (preserves trim)
-  if (idx === currentPredIdx) return;
+  // Guard: clicking any active prepartner-dictn does nothing (preserves trim)
+  if (activePredIndices.indexOf(idx) !== -1) return;
   var pred = prepartner-dictns[idx];
 
   // Check if prepartner-dictn is within the loaded video/pose range (100ms tolerance)
@@ -1018,6 +1026,7 @@ function onRender(event) {
   loadedStartMs = newLoadedStart;
   loadedEndMs = newLoadedEnd;
   currentPredIdx = newPredIdx;
+  activePredIndices = args.active_pred_indices || [currentPredIdx];
 
   // Restore cut points from Python (survives Streamlit rerun cycle)
   var initCuts = args.initial_cut_points || [];

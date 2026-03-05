@@ -34,6 +34,7 @@ def spj_timeline(
     initial_trim_start_ms: int | None = None,
     initial_trim_end_ms: int | None = None,
     initial_cut_points: list[int] | None = None,
+    active_pred_indices: list[int] | None = None,
     key: str = "spj_timeline",
     height: int = 560,
 ) -> dict | None:
@@ -75,6 +76,7 @@ def spj_timeline(
         initial_trim_start_ms=initial_trim_start_ms,
         initial_trim_end_ms=initial_trim_end_ms,
         initial_cut_points=initial_cut_points or [],
+        active_pred_indices=active_pred_indices or [current_pred_idx],
         **connections,
         key=key,
         default=None,
