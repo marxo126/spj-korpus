@@ -170,7 +170,7 @@ def _load_model_cached(ckpt_path: str):
 # Page header
 # ---------------------------------------------------------------------------
 
-st.header("🎓 Training Data")
+st.header("7. 🎓 Training Data")
 st.caption(
     "Align .pose files with subtitles or import glossed clips → review → "
     "export approved segments as float16 .npz files for SignBERT / OpenHands."

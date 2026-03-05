@@ -153,6 +153,32 @@ def _wrist_speed(
     return speed
 
 
+def compute_motion_energy(
+    data: np.ndarray,
+    conf: np.ndarray,
+    hand: str,
+    sigma: float = 2.0,
+) -> np.ndarray:
+    """Normalised wrist speed for the given hand, smoothed and 0–1 scaled.
+
+    Args:
+        data: Pose data array (T, 1, 543, 3).
+        conf: Confidence array (T, 1, 543, 1).
+        hand: ``"right"`` or ``"left"``.
+        sigma: Gaussian smoothing sigma.
+
+    Returns:
+        1-D float32 array of length T, values in [0, 1].
+    """
+    body_idx, hand_idx = (16, 54) if hand == "right" else (15, 33)
+    speed = _wrist_speed(data, conf, body_idx, hand_idx)
+    smooth = _gaussian_smooth(speed, sigma)
+    mx = smooth.max()
+    if mx > 0:
+        smooth /= mx
+    return smooth
+
+
 def _find_segments(
     is_active: np.ndarray,
     fps: float,

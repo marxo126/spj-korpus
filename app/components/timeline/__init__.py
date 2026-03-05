@@ -28,8 +28,14 @@ def spj_timeline(
     connections: dict[str, list],
     segment_start_ms: int,
     segment_end_ms: int,
+    subtitles: list[dict] | None = None,
+    loaded_start_ms: int = 0,
+    loaded_end_ms: int = 0,
+    initial_trim_start_ms: int | None = None,
+    initial_trim_end_ms: int | None = None,
+    initial_cut_points: list[int] | None = None,
     key: str = "spj_timeline",
-    height: int = 520,
+    height: int = 560,
 ) -> dict | None:
     """Render the unified timeline component.
 
@@ -37,11 +43,17 @@ def spj_timeline(
         connections: Dict from ``CONNECTION_ARRAYS`` — keys: body_conn,
             hand_conn, face_lips, face_left_eye, face_right_eye,
             face_left_brow, face_right_brow, face_oval.
+        subtitles: List of {start_ms, end_ms, text} dicts for subtitle track.
+        loaded_start_ms: Start of the loaded video/pose cluster (absolute ms).
+        loaded_end_ms: End of the loaded video/pose cluster (absolute ms).
 
     Returns dict with keys:
         - trim_start_ms: int
         - trim_end_ms: int
         - selected_pred_idx: int
+        - needs_rerun: bool (only True when clicking out-of-range prepartner-dictn)
+        - mode: str ("new_label" when Alt+drag creates custom region)
+        - custom_start_ms, custom_end_ms, custom_hand: (when mode="new_label")
     or None if no interaction yet.
     """
     result = _component_func(
@@ -57,6 +69,12 @@ def spj_timeline(
         current_pred_idx=current_pred_idx,
         segment_start_ms=segment_start_ms,
         segment_end_ms=segment_end_ms,
+        subtitles=subtitles or [],
+        loaded_start_ms=loaded_start_ms,
+        loaded_end_ms=loaded_end_ms,
+        initial_trim_start_ms=initial_trim_start_ms,
+        initial_trim_end_ms=initial_trim_end_ms,
+        initial_cut_points=initial_cut_points or [],
         **connections,
         key=key,
         default=None,

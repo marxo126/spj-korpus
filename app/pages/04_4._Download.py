@@ -25,7 +25,7 @@ DATA_DIR      = Path(__file__).parent.parent.parent / "data"
 VIDEO_DIR     = DATA_DIR / "videos"
 INVENTORY_CSV = DATA_DIR / "inventory.csv"
 
-st.header("⬇ Download")
+st.header("4. ⬇ Download")
 st.caption("Page 4/10 (optional) · Download sign language videos from multiple sources.")
 with st.expander("ℹ️ How to use this page", expanded=False):
     st.markdown("""

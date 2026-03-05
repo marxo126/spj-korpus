@@ -24,7 +24,7 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 INVENTORY_CSV = DATA_DIR / "inventory.csv"
 POSE_DIR = DATA_DIR / "pose"
 
-st.header("🏃 Pose Extraction")
+st.header("2. 🏃 Pose Extraction")
 st.caption("Page 2/10 · Extract 543 body+hand+face keypoints from each video.")
 with st.expander("ℹ️ How to use this page", expanded=False):
     st.markdown("""

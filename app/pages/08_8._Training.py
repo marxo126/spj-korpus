@@ -25,7 +25,7 @@ MODELS_DIR    = DATA_DIR / "models"
 POSE_DIR      = DATA_DIR / "pose"
 MANIFEST_CSV  = EXPORT_DIR / "manifest.csv"
 
-st.header("Training")
+st.header("8. 🏋 Training")
 st.caption("Page 8/10 · Pretrain, cluster, split data, train model, manage checkpoints.")
 with st.expander("How to use this page", expanded=False):
     st.markdown("""

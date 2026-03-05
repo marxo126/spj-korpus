@@ -37,7 +37,7 @@ def _ai_annotation_count(eaf_path: Path) -> int:
         return -1
 
 
-st.header("🤖 Pre-Annotation")
+st.header("5. 🤖 Pre-Annotation")
 st.caption(
     "Page 5/10 · Detect sign boundaries from wrist motion, write timing segments into AI EAF tiers. "
     "No trained model required."

@@ -32,7 +32,7 @@ st.markdown(
     """
 Welcome to the **Slovak Sign Language (SPJ) Corpus** management dashboard.
 
-Use the sidebar to navigate through the 10-page pipeline:
+Use the sidebar to navigate through the 12-page pipeline:
 
 **Data Preparation** (pages 1–4)
 
@@ -51,15 +51,17 @@ Use the sidebar to navigate through the 10-page pipeline:
 | 6. **Subtitles** | Find or OCR-extract Slovak subtitle text |
 | 7. **Training Data** | Align pose + subtitles, review segments, export .npz |
 
-**Training & Deployment** (pages 8–10)
+**Training & Deployment** (pages 8–12)
 
 | Page | Purpose |
 |---|---|
 | 8. **Training** | Split data, train Transformer model, manage checkpoints |
 | 9. **Evaluation** | Evaluate models on test split, compare performance |
 | 10. **Inference** | Predict glosses on new videos, write to EAF |
+| 11. **Assistant** | AI chat assistant with pipeline context |
+| 12. **AI Review** | Review AI prepartner-dictns, approve/correct/skip glosses |
 
-**Active learning loop:** Page 10 (Inference) → ELAN review → Page 7 (re-export) → Page 8 (retrain).
+**Active learning loop:** Page 10 (Inference) → Page 12 (AI Review) → Page 7 (re-export) → Page 8 (retrain).
 
 **Getting started:** Go to the Inventory page, enter your video directory, and click *Scan Videos*.
 """

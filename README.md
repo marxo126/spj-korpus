@@ -258,9 +258,7 @@ SPJ-Korpus builds on established research in pose-based sign language recognitio
 
 ## License
 
-This project is licensed under [CC BY-NC-SA 4.0](LICENSE) — Creative Commons Attribution-NonCommercial-ShareAlike 4.0 International.
-
-You are free to share and adapt this work for non-commercial purposes, with attribution, under the same license.
+Non-Commercial Open Source — free to use, modify, and distribute for non-commercial purposes. See [LICENSE](LICENSE) for details.
 
 ---
 

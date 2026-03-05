@@ -37,7 +37,7 @@ SUBTITLES_DIR = DATA_DIR / "subtitles"
 
 SUBTITLES_DIR.mkdir(parents=True, exist_ok=True)
 
-st.header("📝 Subtitles")
+st.header("6. 📝 Subtitles")
 
 # GPU status banner
 _backend = gpu_backend()

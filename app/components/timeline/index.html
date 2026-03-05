@@ -25,18 +25,24 @@ video { background: #000; border-radius: 6px; flex: 1; min-width: 0; max-width: 
 #timeline-wrapper { position: relative; margin: 4px 0; cursor: default; }
 #tlCanvas { display: block; width: 100%; border-radius: 4px; }
 
+/* Current subtitle display */
+#currentSub { font-size: 12px; padding: 2px 6px; min-height: 18px; color: #c8c8ff; opacity: .85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
 /* Controls bar below timeline */
 #tcontrols { display: flex; align-items: center; gap: 6px; padding: 2px 4px; font-size: 11px; }
 #tcontrols button { background: #262730; border: 1px solid #4a4a5a; color: #fafafa;
   border-radius: 3px; padding: 1px 8px; cursor: pointer; font-size: 11px; }
 #tcontrols button:hover { background: #3a3a4a; }
 #zoomLabel { opacity: .6; min-width: 40px; }
-#trimInfo { opacity: .7; margin-left: auto; font-variant-numeric: tabular-nums; }
+#trimInfo { opacity: .7; font-variant-numeric: tabular-nums; }
+#razorBtn.on { background: #ff6b6b33; border-color: #ff6b6b; color: #ff6b6b; }
+#keyHelp { opacity: .4; font-size: 10px; margin-left: auto; }
+#tooltip { position: absolute; display: none; background: #222; color: #eee;
+  padding: 2px 6px; border-radius: 3px; font-size: 10px; pointer-events: none;
+  z-index: 10; white-space: nowrap; }
 </style>
 <script>
 // Streamlit component communication shim for vanilla HTML components.
-// Implements the postMessage protocol that Streamlit's iframe host expects.
-// Based on streamlit-component-lib@2.0.0/dist/streamlit.js
 (function() {
   var _lastHeight = -1;
   function sendBackMsg(type, data) {
@@ -93,13 +99,17 @@ video { background: #000; border-radius: 6px; flex: 1; min-width: 0; max-width: 
   </div>
   <div id="timeline-wrapper">
     <canvas id="tlCanvas"></canvas>
+    <div id="tooltip"></div>
   </div>
+  <div id="currentSub"></div>
   <div id="tcontrols">
     <button id="zoomFit" title="Fit all">Fit</button>
     <span id="zoomLabel">100%</span>
     <button id="zoomIn" title="Zoom In">+</button>
     <button id="zoomOut" title="Zoom Out">&minus;</button>
+    <button id="razorBtn" title="Razor tool &#8212; click timeline to cut (C)">&#x2702;</button>
     <span id="trimInfo"></span>
+    <span id="keyHelp">C=Cut &middot; X=Undo &middot; A=Save &middot; S=Skip</span>
   </div>
 </div>
 
@@ -108,37 +118,60 @@ video { background: #000; border-radius: 6px; flex: 1; min-width: 0; max-width: 
 "use strict";
 
 // ── Layout constants ───────────────────────────────────────────────
-var TL_ENERGY_H = 28, TL_PRED_H = 22, TL_GAP = 4;
-var TL_H = TL_ENERGY_H + TL_GAP + TL_PRED_H + TL_GAP + TL_PRED_H + TL_GAP + 14;
+var TL_SUB_H = 20, TL_ENERGY_H = 28, TL_PRED_H = 22, TL_GAP = 4;
+var SUB_Y = 0;
+var ENERGY_Y = TL_SUB_H + TL_GAP;
+var RH_Y = ENERGY_Y + TL_ENERGY_H + TL_GAP;
+var LH_Y = RH_Y + TL_PRED_H + TL_GAP;
+var RULER_Y = LH_Y + TL_PRED_H + TL_GAP + 2;
+var TL_H = RULER_Y + 14;
 var NL = 543; // MediaPipe landmark count
 
 function rowY(hand) {
-  var rhY = TL_ENERGY_H + TL_GAP;
-  return hand === "right" ? rhY : rhY + TL_PRED_H + TL_GAP;
+  return hand === "right" ? RH_Y : LH_Y;
 }
-var RULER_Y = TL_ENERGY_H + TL_GAP + TL_PRED_H + TL_GAP + TL_PRED_H + TL_GAP + 2;
 
 // ── State ──────────────────────────────────────────────────────────
 var NF = 0, PFPS = 25;
 var P = null, CF = null;
 var BC, HC, FL, FLE, FRE, FLB, FRB, FO;
 var prepartner-dictns = [], motionEnergy = [], energyFps = 25;
+var subtitles = [], lastSubIdx = 0;
 var durationMs = 1000, currentPredIdx = 0;
 var segStartMs = 0, segEndMs = 1000;
+var loadedStartMs = -1, loadedEndMs = -1;
 var trimStartMs = 0, trimEndMs = 1000, origTrimStart = 0, origTrimEnd = 1000;
 var viewStartMs = 0, viewEndMs = 1000;
-var prevPredIdx = -1; // track prepartner-dictn changes across reruns
 
 // Drag state
-var dragMode = null, dragStartX = 0, dragStartViewStart = 0, dragStartViewEnd = 0;
+var dragMode = null, dragStartX = 0;
+var dragStartViewStart = 0, dragStartViewEnd = 0;
 
-// Cached energy layer (redrawn only when view/energy changes)
-var energyImageData = null, energyCacheKey = "";
+// Cut points for splitting a prepartner-dictn into multiple signs
+var cutPoints = [];
+
+// Razor tool mode (click-to-cut)
+var razorMode = false;
+
+// Dragging a cut point
+var dragCutIdx = -1;
+
+// Split visual segments (derived from cutPoints)
+var splitSegments = [];
+var SPLIT_GAP = 3; // px gap between split blocks
+
+// Custom region (Alt+drag for new label)
+var customRegion = null; // {start_ms, end_ms, hand}
+var customDragStartMs = 0;
+
+// Cached energy layer (reuse single offscreen canvas)
+var energyCanvas = null, energyCacheKey = "";
 
 // Elements
 var vid, poseCanvas, px, tlCanvas, tx;
-var ppBtn, spSel, lpBtn, vtimeSpan;
+var ppBtn, spSel, lpBtn, vtimeSpan, currentSubDiv;
 var zoomFitBtn, zoomInBtn, zoomOutBtn, zoomLabel, trimInfo;
+var razorBtn, keyHelpSpan, tooltipEl;
 
 // ── Base64 decode ──────────────────────────────────────────────────
 function d64(s) {
@@ -157,23 +190,31 @@ function uw() {
   H = parseFloat(poseCanvas.style.height) || poseCanvas.height;
 }
 
-function el(f, cn, o, cl, lw) {
+// Direct mapping — MediaPipe coords are 0–1 normalised in video space,
+// so p*W, p*H gives exact same position as in the video frame.
+function mapPt(x, y) { return [x * W, y * H]; }
+
+function el(f, cn, o, cl, lw, minConf) {
   px.strokeStyle = cl; px.lineWidth = lw; px.beginPath();
+  var mc = minConf || 0.1;
   for (var k = 0; k < cn.length; k++) {
     var a = cn[k][0] + o, b = cn[k][1] + o;
-    if (gc(f,a) < .1 || gc(f,b) < .1) continue;
+    if (gc(f,a) < mc || gc(f,b) < mc) continue;
     var p = gp(f,a), q = gp(f,b);
-    px.moveTo(p[0]*W, p[1]*H); px.lineTo(q[0]*W, q[1]*H);
+    var pp = mapPt(p[0], p[1]), qq = mapPt(q[0], q[1]);
+    px.moveTo(pp[0], pp[1]); px.lineTo(qq[0], qq[1]);
   }
   px.stroke();
 }
 
-function dt(f, s, e, cl, sz) {
+function dt(f, s, e, cl, sz, minConf) {
   px.fillStyle = cl;
+  var mc = minConf || 0.1;
   for (var i = s; i < e; i++) {
-    if (gc(f,i) < .1) continue;
+    if (gc(f,i) < mc) continue;
     var p = gp(f,i);
-    px.beginPath(); px.arc(p[0]*W, p[1]*H, sz, 0, 6.283); px.fill();
+    var pp = mapPt(p[0], p[1]);
+    px.beginPath(); px.arc(pp[0], pp[1], sz, 0, 6.283); px.fill();
   }
 }
 
@@ -182,14 +223,17 @@ function drawPose(f) {
   px.clearRect(0, 0, W, H);
   px.fillStyle = "#000"; px.fillRect(0, 0, W, H);
   if (f < 0 || f >= NF) return;
-  var s = Math.max(1, W / 200);
-  el(f, BC, 0, "royalblue", 1.5*s); dt(f, 0, 15, "royalblue", 2.5*s);
-  el(f, HC, 33, "limegreen", 1.2*s); dt(f, 33, 54, "limegreen", 2*s);
-  el(f, HC, 54, "crimson", 1.2*s); dt(f, 54, 75, "crimson", 2*s);
-  el(f, FO, 75, "rgba(255,215,0,0.2)", 0.8*s);
-  el(f, FL, 75, "hotpink", 1.2*s);
-  el(f, FLE, 75, "cyan", 1*s); el(f, FRE, 75, "cyan", 1*s);
-  el(f, FLB, 75, "orange", 1*s); el(f, FRB, 75, "orange", 1*s);
+  var s = Math.max(0.5, W / 500);
+  // Body — medium lines and dots
+  el(f, BC, 0, "royalblue", 1.5*s); dt(f, 0, 15, "royalblue", 1.5*s);
+  // Hands — lower confidence threshold (0.01) so they don't disappear
+  el(f, HC, 33, "limegreen", 0.8*s, 0.01); dt(f, 33, 54, "limegreen", 1*s, 0.01);
+  el(f, HC, 54, "crimson", 0.8*s, 0.01); dt(f, 54, 75, "crimson", 1*s, 0.01);
+  // Face — fine lines, no dots (just connections)
+  el(f, FO, 75, "rgba(255,215,0,0.15)", 0.4*s);
+  el(f, FL, 75, "hotpink", 0.6*s);
+  el(f, FLE, 75, "cyan", 0.5*s); el(f, FRE, 75, "cyan", 0.5*s);
+  el(f, FLB, 75, "orange", 0.5*s); el(f, FRB, 75, "orange", 0.5*s);
 }
 
 // ── Video sizing ───────────────────────────────────────────────────
@@ -220,6 +264,21 @@ function syncFrame() {
   var absMs = segStartMs + t * 1000;
   vtimeSpan.textContent = fmtMs(absMs);
   ppBtn.innerHTML = vid.paused ? "&#x25B6;" : "&#x23F8;";
+
+  // Update current subtitle (start search from last found index)
+  if (currentSubDiv) {
+    var subText = "";
+    for (var si = 0; si < subtitles.length; si++) {
+      var ci = (lastSubIdx + si) % subtitles.length;
+      if (absMs >= subtitles[ci].start_ms && absMs <= subtitles[ci].end_ms) {
+        subText = subtitles[ci].text;
+        lastSubIdx = ci;
+        break;
+      }
+    }
+    currentSubDiv.textContent = subText ? "\uD83D\uDCAC " + subText : "";
+  }
+
   drawTimeline(absMs);
 }
 
@@ -243,18 +302,19 @@ function resizeTimeline() {
   tlCanvas.style.width = w + "px";
   tlCanvas.style.height = TL_H + "px";
   tx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  energyImageData = null; // invalidate cache on resize
+  _cachedW = w; // keep ms2px in sync
+  energyCacheKey = ""; // invalidate cache on resize
 }
 
 function buildEnergyCache(w) {
-  var key = viewStartMs + ":" + viewEndMs + ":" + w;
-  if (key === energyCacheKey && energyImageData) return;
+  var key = Math.round(viewStartMs) + ":" + Math.round(viewEndMs) + ":" + w;
+  if (key === energyCacheKey && energyCanvas) return;
   energyCacheKey = key;
 
-  // Draw energy into an offscreen canvas, then capture as ImageData
-  var oc = document.createElement("canvas");
-  oc.width = w; oc.height = TL_ENERGY_H;
-  var octx = oc.getContext("2d");
+  if (!energyCanvas) energyCanvas = document.createElement("canvas");
+  energyCanvas.width = w; energyCanvas.height = TL_ENERGY_H;
+  var octx = energyCanvas.getContext("2d");
+  octx.clearRect(0, 0, w, TL_ENERGY_H);
 
   if (motionEnergy.length > 0) {
     var viewDurMs = viewEndMs - viewStartMs;
@@ -269,24 +329,52 @@ function buildEnergyCache(w) {
       octx.fillRect(px2, 0, 1, TL_ENERGY_H);
     }
   }
-  energyImageData = oc;
 }
 
-function drawTimeline(playheadMs) {
+function drawTimeline(phMs) {
   var w = tlWidth();
+  _cachedW = w; // keep ms2px in sync
   var viewRange = viewEndMs - viewStartMs;
   tx.clearRect(0, 0, w, TL_H);
   tx.fillStyle = "#0d0d0d";
   tx.fillRect(0, 0, w, TL_H);
 
-  // ── Cached energy heatmap ──
-  buildEnergyCache(Math.round(w));
-  if (energyImageData) {
-    tx.drawImage(energyImageData, 0, 0);
+  function m2x(ms) { return (ms - viewStartMs) / viewRange * w; }
+
+  // ── Subtitle blocks ──
+  tx.fillStyle = "rgba(255,255,255,0.4)";
+  tx.font = "9px -apple-system, sans-serif";
+  tx.textBaseline = "top";
+  tx.fillText("SUB", 2, SUB_Y + 2);
+
+  for (var si = 0; si < subtitles.length; si++) {
+    var sub = subtitles[si];
+    var sx1 = m2x(sub.start_ms);
+    var sx2 = m2x(sub.end_ms);
+    if (sx2 < 0 || sx1 > w) continue;
+    var sw = Math.max(2, sx2 - sx1);
+
+    tx.fillStyle = "rgba(75,75,180,0.5)";
+    tx.fillRect(sx1, SUB_Y, sw, TL_SUB_H);
+    tx.strokeStyle = "rgba(100,100,200,0.6)";
+    tx.lineWidth = 1;
+    tx.strokeRect(sx1, SUB_Y, sw, TL_SUB_H);
+
+    if (sw > 20) {
+      tx.fillStyle = "rgba(255,255,255,0.85)";
+      tx.textBaseline = "middle";
+      var subLabel = sub.text || "";
+      var maxSubChars = Math.floor((sw - 6) / 5.5);
+      if (subLabel.length > maxSubChars) subLabel = subLabel.substring(0, maxSubChars - 1) + "\u2026";
+      tx.fillText(subLabel, sx1 + 3, SUB_Y + TL_SUB_H / 2);
+    }
   }
 
-  // ── Inline ms→x transform (avoids function call overhead in hot loop) ──
-  function m2x(ms) { return (ms - viewStartMs) / viewRange * w; }
+  // ── Cached energy heatmap ──
+  buildEnergyCache(Math.round(w));
+  if (energyCanvas) {
+    tx.drawImage(energyCanvas, 0, ENERGY_Y);
+  }
 
   // ── Prepartner-dictn blocks ──
   for (var i = 0; i < prepartner-dictns.length; i++) {
@@ -300,53 +388,116 @@ function drawTimeline(playheadMs) {
     var baseColor = p.hand === "right" ? "crimson" : "limegreen";
     var opacity = Math.max(0.3, Math.min(1.0, p.prepartner-dictn_confidence || 0.5));
 
-    tx.globalAlpha = isCurrent ? 1.0 : opacity * 0.7;
-    tx.fillStyle = baseColor;
-    tx.fillRect(x1, y, Math.max(2, x2 - x1), TL_PRED_H);
-    tx.globalAlpha = 1.0;
+    // ── Split blocks for current prepartner-dictn with cuts ──
+    if (isCurrent && splitSegments.length > 0) {
+      for (var si = 0; si < splitSegments.length; si++) {
+        var seg = splitSegments[si];
+        var sx1 = m2x(seg.start_ms), sx2 = m2x(seg.end_ms);
+        // Inset by half gap on inner edges
+        var gapL = (si > 0) ? SPLIT_GAP / 2 : 0;
+        var gapR = (si < splitSegments.length - 1) ? SPLIT_GAP / 2 : 0;
+        var bx1 = sx1 + gapL, bx2 = sx2 - gapR;
+        var bw = Math.max(2, bx2 - bx1);
 
-    // Status border
-    var status = p.review_status || "pending";
-    if (status === "approved") {
-      tx.strokeStyle = "#00ff00"; tx.lineWidth = 2;
-    } else if (status === "skipped") {
-      tx.strokeStyle = "#666"; tx.lineWidth = 1;
-    } else {
-      tx.strokeStyle = "#ffcc00"; tx.lineWidth = 1;
-      tx.setLineDash([3, 3]);
-    }
-    tx.strokeRect(x1, y, Math.max(2, x2 - x1), TL_PRED_H);
-    tx.setLineDash([]);
+        // Filled block
+        tx.globalAlpha = 1.0;
+        tx.fillStyle = baseColor;
+        tx.fillRect(bx1, y, bw, TL_PRED_H);
 
-    // Current selection highlight + trim handles
-    if (isCurrent) {
-      tx.strokeStyle = "#fff"; tx.lineWidth = 2;
+        // White solid border (looks like independent block)
+        tx.strokeStyle = "#fff"; tx.lineWidth = 1.5;
+        tx.strokeRect(bx1, y, bw, TL_PRED_H);
+
+        // Segment label
+        var segLabel = "";
+        var gloss = seg.predicted_gloss || "";
+        if (bw > 60) segLabel = "Seg " + (si + 1) + ": " + gloss;
+        else if (bw > 30) segLabel = "Seg " + (si + 1);
+        if (segLabel) {
+          tx.fillStyle = "#fff";
+          tx.font = "bold 9px -apple-system, sans-serif";
+          tx.textBaseline = "middle";
+          var maxChars = Math.floor((bw - 6) / 5.5);
+          if (segLabel.length > maxChars) segLabel = segLabel.substring(0, maxChars - 1) + "\u2026";
+          tx.fillText(segLabel, bx1 + 3, y + TL_PRED_H / 2);
+        }
+      }
+      tx.globalAlpha = 1.0;
+
+      // Trim handles on outermost edges only
       var tx1 = m2x(trimStartMs), tx2 = m2x(trimEndMs);
-      tx.strokeRect(tx1, y - 2, Math.max(2, tx2 - tx1), TL_PRED_H + 4);
       tx.fillStyle = "#fff";
       tx.beginPath(); tx.moveTo(tx1, y-4); tx.lineTo(tx1+6, y-4); tx.lineTo(tx1, y+4); tx.fill();
       tx.beginPath(); tx.moveTo(tx2, y-4); tx.lineTo(tx2-6, y-4); tx.lineTo(tx2, y+4); tx.fill();
-    }
+    } else {
+      // ── Normal single-block drawing (no cuts or non-current) ──
+      tx.globalAlpha = isCurrent ? 1.0 : opacity * 0.7;
+      tx.fillStyle = baseColor;
+      tx.fillRect(x1, y, Math.max(2, x2 - x1), TL_PRED_H);
+      tx.globalAlpha = 1.0;
 
-    // Gloss label
-    var blockW = x2 - x1;
-    if (blockW > 30) {
-      tx.fillStyle = isCurrent ? "#fff" : "rgba(255,255,255,0.8)";
-      tx.font = (isCurrent ? "bold " : "") + "10px -apple-system, sans-serif";
-      tx.textBaseline = "middle";
-      var label = p.predicted_gloss || "";
-      var maxChars = Math.floor(blockW / 6);
-      if (label.length > maxChars) label = label.substring(0, maxChars - 1) + "…";
-      tx.fillText(label, x1 + 3, y + TL_PRED_H / 2);
+      // Status border
+      var status = p.review_status || "pending";
+      if (status === "approved") {
+        tx.strokeStyle = "#00ff00"; tx.lineWidth = 2;
+      } else if (status === "skipped") {
+        tx.strokeStyle = "#666"; tx.lineWidth = 1;
+      } else {
+        tx.strokeStyle = "#ffcc00"; tx.lineWidth = 1;
+        tx.setLineDash([3, 3]);
+      }
+      tx.strokeRect(x1, y, Math.max(2, x2 - x1), TL_PRED_H);
+      tx.setLineDash([]);
+
+      // Current selection highlight + trim handles
+      if (isCurrent) {
+        var tx1 = m2x(trimStartMs), tx2 = m2x(trimEndMs);
+        tx.fillStyle = "rgba(255,255,255,0.06)";
+        tx.fillRect(tx1, y - 2, Math.max(2, tx2 - tx1), TL_PRED_H + 4);
+        tx.strokeStyle = "#fff"; tx.lineWidth = 2;
+        tx.strokeRect(tx1, y - 2, Math.max(2, tx2 - tx1), TL_PRED_H + 4);
+        tx.fillStyle = "#fff";
+        tx.beginPath(); tx.moveTo(tx1, y-4); tx.lineTo(tx1+6, y-4); tx.lineTo(tx1, y+4); tx.fill();
+        tx.beginPath(); tx.moveTo(tx2, y-4); tx.lineTo(tx2-6, y-4); tx.lineTo(tx2, y+4); tx.fill();
+      }
+
+      // Gloss label
+      var blockW = x2 - x1;
+      if (blockW > 30) {
+        tx.fillStyle = isCurrent ? "#fff" : "rgba(255,255,255,0.8)";
+        tx.font = (isCurrent ? "bold " : "") + "10px -apple-system, sans-serif";
+        tx.textBaseline = "middle";
+        var label = p.predicted_gloss || "";
+        var maxChars = Math.floor(blockW / 6);
+        if (label.length > maxChars) label = label.substring(0, maxChars - 1) + "\u2026";
+        tx.fillText(label, x1 + 3, y + TL_PRED_H / 2);
+      }
     }
+  }
+
+  // ── Custom region (Alt+drag new label) ──
+  if (customRegion) {
+    var cy = rowY(customRegion.hand);
+    var cx1 = m2x(customRegion.start_ms);
+    var cx2 = m2x(customRegion.end_ms);
+    tx.fillStyle = "rgba(255,200,0,0.25)";
+    tx.fillRect(cx1, cy, Math.max(2, cx2 - cx1), TL_PRED_H);
+    tx.strokeStyle = "#ffcc00"; tx.lineWidth = 2;
+    tx.setLineDash([4, 4]);
+    tx.strokeRect(cx1, cy, Math.max(2, cx2 - cx1), TL_PRED_H);
+    tx.setLineDash([]);
+    tx.fillStyle = "#ffcc00";
+    tx.font = "bold 9px -apple-system, sans-serif";
+    tx.textBaseline = "middle";
+    tx.fillText("NEW", cx1 + 3, cy + TL_PRED_H / 2);
   }
 
   // ── Row labels ──
   tx.fillStyle = "rgba(255,255,255,0.4)";
   tx.font = "9px -apple-system, sans-serif";
   tx.textBaseline = "top";
-  tx.fillText("RH", 2, rowY("right") + 2);
-  tx.fillText("LH", 2, rowY("left") + 2);
+  tx.fillText("RH", 2, RH_Y + 2);
+  tx.fillText("LH", 2, LH_Y + 2);
 
   // ── Time ruler ──
   tx.strokeStyle = "rgba(255,255,255,0.2)"; tx.lineWidth = 1;
@@ -365,8 +516,8 @@ function drawTimeline(playheadMs) {
   }
 
   // ── Playhead ──
-  if (playheadMs !== undefined && playheadMs >= viewStartMs && playheadMs <= viewEndMs) {
-    var phX = m2x(playheadMs);
+  if (phMs !== undefined && phMs >= viewStartMs && phMs <= viewEndMs) {
+    var phX = m2x(phMs);
     tx.strokeStyle = "#fff"; tx.lineWidth = 1.5;
     tx.beginPath(); tx.moveTo(phX, 0); tx.lineTo(phX, TL_H); tx.stroke();
     tx.fillStyle = "#fff";
@@ -376,40 +527,127 @@ function drawTimeline(playheadMs) {
   // ── Trim info ──
   if (trimInfo) {
     var trimmed = (trimStartMs !== origTrimStart || trimEndMs !== origTrimEnd);
-    trimInfo.textContent = fmtMs(trimStartMs) + " → " + fmtMs(trimEndMs) + (trimmed ? " (trimmed)" : "");
+    trimInfo.textContent = fmtMs(trimStartMs) + " \u2192 " + fmtMs(trimEndMs) + (trimmed ? " (trimmed)" : "");
     trimInfo.style.color = trimmed ? "#ffcc00" : "";
   }
 }
 
 // ── Timeline interaction ───────────────────────────────────────────
+var _cachedW = 600; // cached tlWidth(), updated on resize/draw
+function ms2px(ms) {
+  return (ms - viewStartMs) / (viewEndMs - viewStartMs) * _cachedW;
+}
+
+function playheadMs() {
+  return segStartMs + (vid.currentTime || 0) * 1000;
+}
+
+function sendCutState() {
+  sendValue({ trim_start_ms: Math.round(trimStartMs), trim_end_ms: Math.round(trimEndMs), selected_pred_idx: currentPredIdx, cut_points_ms: cutPoints.slice() });
+}
+
+function isCutNearby(ms) {
+  for (var i = 0; i < cutPoints.length; i++) { if (Math.abs(cutPoints[i] - ms) < 20) return true; }
+  return false;
+}
+
+function rebuildSplitSegments() {
+  var p = prepartner-dictns[currentPredIdx];
+  if (!p || cutPoints.length === 0) { splitSegments = []; return; }
+  var bounds = [trimStartMs].concat(cutPoints).concat([trimEndMs]);
+  splitSegments = [];
+  for (var i = 0; i < bounds.length - 1; i++) {
+    splitSegments.push({
+      start_ms: bounds[i], end_ms: bounds[i + 1],
+      hand: p.hand, predicted_gloss: p.predicted_gloss,
+      prepartner-dictn_confidence: p.prepartner-dictn_confidence
+    });
+  }
+}
+
+var NUM_SORT = function(a,b) { return a - b; };
+
 function hitTest(mouseX, mouseY) {
   var p = prepartner-dictns[currentPredIdx];
   if (p) {
     var y = rowY(p.hand);
     if (mouseY >= y - 4 && mouseY <= y + TL_PRED_H + 4) {
-      var w = tlWidth(), viewRange = viewEndMs - viewStartMs;
-      var lx = (trimStartMs - viewStartMs) / viewRange * w;
-      var rx = (trimEndMs - viewStartMs) / viewRange * w;
-      if (Math.abs(mouseX - lx) < 10) return "trimLeft";
-      if (Math.abs(mouseX - rx) < 10) return "trimRight";
+      if (Math.abs(mouseX - ms2px(trimStartMs)) < 10) return "trimLeft";
+      if (Math.abs(mouseX - ms2px(trimEndMs)) < 10) return "trimRight";
     }
   }
 
-  var w = tlWidth(), viewRange = viewEndMs - viewStartMs;
+  // Hit test cut points (draggable)
+  for (var ci = 0; ci < cutPoints.length; ci++) {
+    if (Math.abs(mouseX - ms2px(cutPoints[ci])) < 8) return { type: "dragCut", idx: ci };
+  }
+
   for (var i = 0; i < prepartner-dictns.length; i++) {
     var pr = prepartner-dictns[i];
     var py = rowY(pr.hand);
     if (mouseY >= py && mouseY <= py + TL_PRED_H) {
-      var x1 = (pr.start_ms - viewStartMs) / viewRange * w;
-      var x2 = (pr.end_ms - viewStartMs) / viewRange * w;
-      if (mouseX >= x1 && mouseX <= x2) return { type: "selectPred", idx: i };
+      if (mouseX >= ms2px(pr.start_ms) && mouseX <= ms2px(pr.end_ms)) return { type: "selectPred", idx: i };
     }
   }
   return null;
 }
 
 function xToMs(x) {
-  return viewStartMs + x / tlWidth() * (viewEndMs - viewStartMs);
+  return viewStartMs + x / _cachedW * (viewEndMs - viewStartMs);
+}
+
+// ── selectPrepartner-dictn: internal switch for in-range, sendValue for out-of-range ──
+function selectPrepartner-dictn(idx) {
+  if (idx < 0 || idx >= prepartner-dictns.length) return;
+  // Guard: clicking the same prepartner-dictn does nothing (preserves trim)
+  if (idx === currentPredIdx) return;
+  var pred = prepartner-dictns[idx];
+
+  // Check if prepartner-dictn is within the loaded video/pose range (100ms tolerance)
+  var inRange = (pred.start_ms >= loadedStartMs - 100 && pred.end_ms <= loadedEndMs + 100);
+
+  if (inRange) {
+    // In-range: internal switch — seek video, update trim, no Streamlit rerun
+    currentPredIdx = idx;
+    cutPoints = [];
+    splitSegments = [];
+    trimStartMs = pred.start_ms; trimEndMs = pred.end_ms;
+    origTrimStart = pred.start_ms; origTrimEnd = pred.end_ms;
+
+    // Seek video to prepartner-dictn start
+    var relMs = pred.start_ms - segStartMs;
+    if (vid.duration && relMs >= 0 && relMs <= vid.duration * 1000) {
+      vid.currentTime = relMs / 1000;
+    }
+
+    // Zoom to context around prepartner-dictn
+    var predDur = pred.end_ms - pred.start_ms;
+    var ctx = Math.max(2000, predDur * 3);
+    viewStartMs = Math.max(0, pred.start_ms - ctx);
+    viewEndMs = Math.min(durationMs, pred.end_ms + ctx);
+    updateZoomLabel();
+    syncFrame();
+
+    // Send value WITHOUT needs_rerun so Python updates its UI state
+    sendValue({
+      selected_pred_idx: idx,
+      trim_start_ms: Math.round(trimStartMs),
+      trim_end_ms: Math.round(trimEndMs),
+      cut_points_ms: [],
+      needs_rerun: false
+    });
+  } else {
+    // Out-of-range: need Python to load new video/pose cluster
+    cutPoints = [];
+    splitSegments = [];
+    sendValue({
+      selected_pred_idx: idx,
+      trim_start_ms: Math.round(pred.start_ms),
+      trim_end_ms: Math.round(pred.end_ms),
+      cut_points_ms: [],
+      needs_rerun: true
+    });
+  }
 }
 
 function setupTimelineEvents() {
@@ -418,23 +656,63 @@ function setupTimelineEvents() {
     var mouseX = e.clientX - rect.left, mouseY = e.clientY - rect.top;
 
     var hit = hitTest(mouseX, mouseY);
+
+    // Trim handles (highest priority)
     if (hit === "trimLeft" || hit === "trimRight") {
       dragMode = hit; dragStartX = mouseX;
       e.preventDefault(); return;
     }
-    if (hit && hit.type === "selectPred") {
-      sendValue({ selected_pred_idx: hit.idx, trim_start_ms: prepartner-dictns[hit.idx].start_ms, trim_end_ms: prepartner-dictns[hit.idx].end_ms });
+
+    // Draggable cut points
+    if (hit && hit.type === "dragCut") {
+      dragMode = "dragCut"; dragCutIdx = hit.idx; dragStartX = mouseX;
       e.preventDefault(); return;
     }
-    if (e.shiftKey) {
+
+    // Razor mode: click within trim range to add cut (overrides prepartner-dictn select)
+    if (razorMode && mouseY >= RH_Y && mouseY < RULER_Y) {
+      var ms = Math.round(xToMs(mouseX));
+      if (ms > trimStartMs && ms < trimEndMs && !isCutNearby(ms)) {
+        cutPoints.push(ms); cutPoints.sort(NUM_SORT);
+        rebuildSplitSegments();
+        drawTimeline(playheadMs());
+        sendCutState();
+        updateKeyHelp();
+      }
+      e.preventDefault(); return;
+    }
+
+    // Alt+drag on empty area = new label region
+    if (e.altKey && !hit) {
+      dragMode = "newRegion"; dragStartX = mouseX;
+      customDragStartMs = xToMs(mouseX);
+      // Determine hand from y position
+      var hand = (mouseY >= LH_Y) ? "left" : "right";
+      customRegion = { start_ms: customDragStartMs, end_ms: customDragStartMs, hand: hand };
+      e.preventDefault(); return;
+    }
+
+    // Click prepartner-dictn = select it
+    if (hit && hit.type === "selectPred") {
+      selectPrepartner-dictn(hit.idx);
+      e.preventDefault(); return;
+    }
+
+    // Drag on empty area = pan (no shift needed — video editor style)
+    if (!hit) {
+      // Check if clicking ruler area → seek playhead
+      if (mouseY >= RULER_Y) {
+        var ms = xToMs(mouseX), relMs = ms - segStartMs;
+        if (vid.duration && relMs >= 0 && relMs <= vid.duration * 1000) {
+          vid.currentTime = relMs / 1000; syncFrame();
+        }
+        e.preventDefault(); return;
+      }
+
+      // Otherwise drag = pan
       dragMode = "pan"; dragStartX = mouseX;
       dragStartViewStart = viewStartMs; dragStartViewEnd = viewEndMs;
       e.preventDefault(); return;
-    }
-    // Click empty area → seek
-    var ms = xToMs(mouseX), relMs = ms - segStartMs;
-    if (vid.duration && relMs >= 0 && relMs <= vid.duration * 1000) {
-      vid.currentTime = relMs / 1000; syncFrame();
     }
   });
 
@@ -444,11 +722,17 @@ function setupTimelineEvents() {
 
     if (dragMode === "trimLeft") {
       trimStartMs = Math.round(Math.max(0, Math.min(xToMs(mouseX), trimEndMs - 40)) / 10) * 10;
-      drawTimeline(segStartMs + (vid.currentTime || 0) * 1000); return;
+      if (cutPoints.length > 0) rebuildSplitSegments();
+      drawTimeline(playheadMs()); return;
     }
     if (dragMode === "trimRight") {
       trimEndMs = Math.round(Math.max(trimStartMs + 40, Math.min(xToMs(mouseX), durationMs)) / 10) * 10;
-      drawTimeline(segStartMs + (vid.currentTime || 0) * 1000); return;
+      if (cutPoints.length > 0) rebuildSplitSegments();
+      drawTimeline(playheadMs()); return;
+    }
+    if (dragMode === "dragCut") {
+      cutPoints[dragCutIdx] = Math.round(Math.max(trimStartMs + 30, Math.min(xToMs(mouseX), trimEndMs - 30)));
+      rebuildSplitSegments(); drawTimeline(playheadMs()); return;
     }
     if (dragMode === "pan") {
       var w = tlWidth();
@@ -458,24 +742,104 @@ function setupTimelineEvents() {
       var newEnd = newStart + (dragStartViewEnd - dragStartViewStart);
       if (newEnd > durationMs) { newEnd = durationMs; newStart = newEnd - (dragStartViewEnd - dragStartViewStart); }
       viewStartMs = Math.max(0, newStart); viewEndMs = newEnd;
-      drawTimeline(segStartMs + (vid.currentTime || 0) * 1000); return;
+      drawTimeline(playheadMs()); return;
+    }
+    if (dragMode === "newRegion" && customRegion) {
+      var ms = xToMs(mouseX);
+      customRegion.start_ms = Math.min(customDragStartMs, ms);
+      customRegion.end_ms = Math.max(customDragStartMs, ms);
+      drawTimeline(playheadMs()); return;
     }
 
+    // Skip hit testing during active drag (performance: avoids ms2px loops)
+    if (dragMode) return;
+
+    // Update cursor + tooltip
     var hit = hitTest(mouseX, mouseY);
     tlCanvas.style.cursor = (hit === "trimLeft" || hit === "trimRight") ? "ew-resize"
+      : (hit && hit.type === "dragCut") ? "col-resize"
       : (hit && hit.type === "selectPred") ? "pointer"
-      : e.shiftKey ? "grab" : "crosshair";
+      : razorMode && mouseY >= RH_Y && mouseY < RULER_Y ? "crosshair"
+      : e.altKey ? "crosshair"
+      : mouseY >= RULER_Y ? "crosshair"
+      : "grab";
+
+    // Tooltip
+    var tip = "";
+    if (hit === "trimLeft" || hit === "trimRight") tip = "Drag to trim";
+    else if (hit && hit.type === "dragCut") tip = "Drag to move \u00b7 Right-click to delete";
+    else if (hit && hit.type === "selectPred") {
+      var pr = prepartner-dictns[hit.idx];
+      tip = (pr.predicted_gloss || "?") + " (" + Math.round((pr.prepartner-dictn_confidence||0)*100) + "%)";
+    }
+    else if (razorMode && mouseY >= RH_Y && mouseY < RULER_Y) tip = "Click to add cut";
+    else if (mouseY >= RULER_Y) tip = "Click to seek";
+
+    if (tip && tooltipEl) {
+      tooltipEl.textContent = tip;
+      tooltipEl.style.display = "block";
+      tooltipEl.style.left = Math.min(mouseX + 10, _cachedW - 100) + "px";
+      tooltipEl.style.top = (mouseY - 20) + "px";
+    } else if (tooltipEl) {
+      tooltipEl.style.display = "none";
+    }
   });
 
-  function onMouseUp() {
+  // Hide tooltip on mouse leave
+  tlCanvas.addEventListener("mouseleave", function() {
+    if (tooltipEl) tooltipEl.style.display = "none";
+  });
+
+  function onMouseUp(e) {
+    if (dragMode === "dragCut") {
+      cutPoints.sort(NUM_SORT);
+      rebuildSplitSegments();
+      sendCutState();
+      updateKeyHelp();
+    }
     if (dragMode === "trimLeft" || dragMode === "trimRight") {
-      sendValue({ trim_start_ms: Math.round(trimStartMs), trim_end_ms: Math.round(trimEndMs), selected_pred_idx: currentPredIdx });
+      // Filter cut points to new trim range
+      cutPoints = cutPoints.filter(function(cp) { return cp > trimStartMs && cp < trimEndMs; });
+      rebuildSplitSegments();
+      sendCutState();
+    }
+    if (dragMode === "newRegion" && customRegion) {
+      var dur = customRegion.end_ms - customRegion.start_ms;
+      if (dur >= 50) {
+        // Send new label region to Python
+        sendValue({
+          mode: "new_label",
+          custom_start_ms: Math.round(customRegion.start_ms),
+          custom_end_ms: Math.round(customRegion.end_ms),
+          custom_hand: customRegion.hand
+        });
+      } else {
+        customRegion = null;
+        drawTimeline(playheadMs());
+      }
     }
     dragMode = null;
   }
-  tlCanvas.addEventListener("mouseup", onMouseUp);
   document.addEventListener("mouseup", onMouseUp);
 
+  // Right-click on cut point = delete it
+  tlCanvas.addEventListener("contextmenu", function(e) {
+    var rect = tlCanvas.getBoundingClientRect();
+    var mouseX = e.clientX - rect.left;
+    for (var i = 0; i < cutPoints.length; i++) {
+      if (Math.abs(mouseX - ms2px(cutPoints[i])) < 8) {
+        e.preventDefault();
+        cutPoints.splice(i, 1);
+        rebuildSplitSegments();
+        drawTimeline(playheadMs());
+        sendCutState();
+        updateKeyHelp();
+        return;
+      }
+    }
+  });
+
+  // Scroll = horizontal pan, Ctrl/Cmd+scroll = zoom
   tlCanvas.addEventListener("wheel", function(e) {
     e.preventDefault();
     var rect = tlCanvas.getBoundingClientRect();
@@ -483,20 +847,50 @@ function setupTimelineEvents() {
     var frac = mouseX / w;
     var mouseMs = viewStartMs + frac * (viewEndMs - viewStartMs);
     var viewDur = viewEndMs - viewStartMs;
-    var zoomFactor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
-    var newDur = Math.max(500, Math.min(durationMs, viewDur * zoomFactor));
-    viewStartMs = mouseMs - frac * newDur;
-    viewEndMs = mouseMs + (1 - frac) * newDur;
+
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd+scroll = zoom (trackpad pinch sends ctrlKey automatically)
+      var zoomFactor = e.deltaY > 0 ? 1.2 : 1 / 1.2;
+      var newDur = Math.max(500, Math.min(durationMs, viewDur * zoomFactor));
+      viewStartMs = mouseMs - frac * newDur;
+      viewEndMs = mouseMs + (1 - frac) * newDur;
+    } else {
+      // Regular scroll = horizontal pan
+      var scrollMs = (e.deltaY || e.deltaX) * viewDur / w * 3;
+      viewStartMs += scrollMs;
+      viewEndMs += scrollMs;
+    }
+
+    // Clamp
     if (viewStartMs < 0) { viewEndMs -= viewStartMs; viewStartMs = 0; }
     if (viewEndMs > durationMs) { viewStartMs -= (viewEndMs - durationMs); viewEndMs = durationMs; }
     viewStartMs = Math.max(0, viewStartMs);
+    viewEndMs = Math.min(durationMs, viewEndMs);
+
     updateZoomLabel();
-    drawTimeline(segStartMs + (vid.currentTime || 0) * 1000);
+    drawTimeline(playheadMs());
   }, { passive: false });
 }
 
 function updateZoomLabel() {
   if (zoomLabel) zoomLabel.textContent = Math.round(durationMs / (viewEndMs - viewStartMs) * 100) + "%";
+}
+
+function updateKeyHelp() {
+  if (!keyHelpSpan) return;
+  if (razorMode) {
+    keyHelpSpan.textContent = "Click to cut \u00b7 Right-click=Delete \u00b7 C=Exit razor";
+  } else if (cutPoints.length > 0) {
+    keyHelpSpan.textContent = "Drag cuts to adjust \u00b7 X=Remove last \u00b7 A=Save All";
+  } else {
+    keyHelpSpan.textContent = "C=Cut \u00b7 X=Undo \u00b7 A=Save \u00b7 S=Skip";
+  }
+}
+
+function toggleRazorMode() {
+  razorMode = !razorMode;
+  if (razorBtn) razorBtn.className = razorMode ? "on" : "";
+  updateKeyHelp();
 }
 
 // ── Streamlit communication ────────────────────────────────────────
@@ -519,11 +913,17 @@ function init() {
   spSel = document.getElementById("sp");
   lpBtn = document.getElementById("lp");
   vtimeSpan = document.getElementById("vtime");
+  currentSubDiv = document.getElementById("currentSub");
   zoomFitBtn = document.getElementById("zoomFit");
   zoomInBtn = document.getElementById("zoomIn");
   zoomOutBtn = document.getElementById("zoomOut");
   zoomLabel = document.getElementById("zoomLabel");
   trimInfo = document.getElementById("trimInfo");
+  razorBtn = document.getElementById("razorBtn");
+  keyHelpSpan = document.getElementById("keyHelp");
+  tooltipEl = document.getElementById("tooltip");
+
+  razorBtn.onclick = toggleRazorMode;
 
   ppBtn.onclick = function() { if (vid.paused) vid.play(); else vid.pause(); syncFrame(); };
   spSel.onchange = function() { vid.playbackRate = +spSel.value; };
@@ -532,17 +932,17 @@ function init() {
 
   zoomFitBtn.onclick = function() {
     viewStartMs = 0; viewEndMs = durationMs;
-    updateZoomLabel(); drawTimeline(segStartMs + (vid.currentTime || 0) * 1000);
+    updateZoomLabel(); drawTimeline(playheadMs());
   };
   zoomInBtn.onclick = function() {
     var mid = (viewStartMs + viewEndMs) / 2, halfDur = Math.max(250, (viewEndMs - viewStartMs) / 2 / 1.5);
     viewStartMs = Math.max(0, mid - halfDur); viewEndMs = Math.min(durationMs, mid + halfDur);
-    updateZoomLabel(); drawTimeline(segStartMs + (vid.currentTime || 0) * 1000);
+    updateZoomLabel(); drawTimeline(playheadMs());
   };
   zoomOutBtn.onclick = function() {
     var mid = (viewStartMs + viewEndMs) / 2, halfDur = (viewEndMs - viewStartMs) / 2 * 1.5;
     viewStartMs = Math.max(0, mid - halfDur); viewEndMs = Math.min(durationMs, mid + halfDur);
-    updateZoomLabel(); drawTimeline(segStartMs + (vid.currentTime || 0) * 1000);
+    updateZoomLabel(); drawTimeline(playheadMs());
   };
 
   document.onkeydown = function(e) {
@@ -553,13 +953,34 @@ function init() {
     else if (e.code === "ArrowRight" && !e.shiftKey) {
       e.preventDefault(); vid.currentTime = Math.min(vid.duration || 0, vid.currentTime + 1/PFPS); syncFrame();
     }
+    else if (e.key === "c" || e.key === "C") {
+      var ms = Math.round(playheadMs());
+      if (ms > trimStartMs && ms < trimEndMs && !isCutNearby(ms)) {
+        cutPoints.push(ms); cutPoints.sort(NUM_SORT);
+        rebuildSplitSegments(); drawTimeline(ms);
+        sendCutState();
+        updateKeyHelp();
+      } else if (ms <= trimStartMs || ms >= trimEndMs) {
+        toggleRazorMode();
+      }
+    }
+    else if (e.key === "x" || e.key === "X") {
+      if (cutPoints.length > 0) {
+        cutPoints.pop();
+        rebuildSplitSegments();
+        drawTimeline(playheadMs());
+        sendCutState();
+        updateKeyHelp();
+      }
+    }
   };
 
   var hasRVFC = "requestVideoFrameCallback" in HTMLVideoElement.prototype;
   if (hasRVFC) {
     vid.requestVideoFrameCallback(function onFrame() { syncFrame(); vid.requestVideoFrameCallback(onFrame); });
+  } else {
+    vid.addEventListener("timeupdate", syncFrame);
   }
-  vid.addEventListener("timeupdate", syncFrame);
   vid.addEventListener("seeked", syncFrame);
   vid.addEventListener("loadedmetadata", function() {
     vidDur = vid.duration; resizeVideoAndPose(); drawPose(0); syncFrame();
@@ -579,25 +1000,52 @@ function onRender(event) {
   prepartner-dictns = args.prepartner-dictns || [];
   motionEnergy = args.motion_energy || [];
   energyFps = args.energy_fps || 25;
+  subtitles = args.subtitles || [];
   var newPredIdx = args.current_pred_idx || 0;
   segStartMs = args.segment_start_ms || 0;
   segEndMs = args.segment_end_ms || 1000;
+  var newLoadedStart = args.loaded_start_ms || 0;
+  var newLoadedEnd = args.loaded_end_ms || 0;
 
   BC = args.body_conn || []; HC = args.hand_conn || [];
   FL = args.face_lips || []; FLE = args.face_left_eye || [];
   FRE = args.face_right_eye || []; FLB = args.face_left_brow || [];
   FRB = args.face_right_brow || []; FO = args.face_oval || [];
 
-  // Only reset trim/zoom when prepartner-dictn actually changes
-  var predChanged = (newPredIdx !== prevPredIdx);
+  // Reset view/trim only when loaded range changes (not just pred index)
+  var rangeChanged = (newLoadedStart !== loadedStartMs || newLoadedEnd !== loadedEndMs);
+  var predChanged = (newPredIdx !== currentPredIdx);
+  loadedStartMs = newLoadedStart;
+  loadedEndMs = newLoadedEnd;
   currentPredIdx = newPredIdx;
-  prevPredIdx = newPredIdx;
 
+  // Restore cut points from Python (survives Streamlit rerun cycle)
+  var initCuts = args.initial_cut_points || [];
   if (predChanged) {
-    var curPred = prepartner-dictns[currentPredIdx];
-    if (curPred) {
+    cutPoints = [];
+    splitSegments = [];
+    razorMode = false;
+    if (razorBtn) razorBtn.className = "";
+    updateKeyHelp();
+  } else {
+    cutPoints = initCuts.slice();
+    rebuildSplitSegments();
+  }
+
+  // Restore trim from Python (persisted across reruns) or use prepartner-dictn bounds
+  var curPred = prepartner-dictns[currentPredIdx];
+  var initS = args.initial_trim_start_ms, initE = args.initial_trim_end_ms;
+  if (curPred) {
+    origTrimStart = curPred.start_ms; origTrimEnd = curPred.end_ms;
+    if (initS != null && initE != null && initS < initE) {
+      trimStartMs = initS; trimEndMs = initE;
+    } else if (rangeChanged) {
       trimStartMs = curPred.start_ms; trimEndMs = curPred.end_ms;
-      origTrimStart = curPred.start_ms; origTrimEnd = curPred.end_ms;
+    }
+  }
+
+  if (rangeChanged) {
+    if (curPred) {
       var predDur = curPred.end_ms - curPred.start_ms;
       var ctx = Math.max(2000, predDur * 3);
       viewStartMs = Math.max(0, curPred.start_ms - ctx);
@@ -605,6 +1053,9 @@ function onRender(event) {
     } else {
       viewStartMs = 0; viewEndMs = durationMs;
     }
+    customRegion = null;
+    cutPoints = [];
+    splitSegments = [];
   }
 
   // Decode pose data
@@ -616,7 +1067,7 @@ function onRender(event) {
     if (vid.getAttribute("src") !== newSrc) vid.src = newSrc;
   }
 
-  energyImageData = null; // invalidate energy cache (motion energy may have changed)
+  if (rangeChanged) energyCacheKey = ""; // invalidate energy cache only when data changes
   resizeTimeline();
   updateZoomLabel();
   drawTimeline(segStartMs);

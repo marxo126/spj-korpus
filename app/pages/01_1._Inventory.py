@@ -13,7 +13,7 @@ DATA_DIR = Path(__file__).parent.parent.parent / "data"
 INVENTORY_CSV = DATA_DIR / "inventory.csv"
 VIDEO_DIR_DEFAULT = str(DATA_DIR / "videos")
 
-st.header("📂 Video Inventory")
+st.header("1. 📂 Video Inventory")
 st.caption("Page 1/10 · Register your video files so all other pages can find them.")
 with st.expander("ℹ️ How to use this page", expanded=False):
     st.markdown("""

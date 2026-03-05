@@ -16,7 +16,7 @@ import streamlit as st
 DATA_DIR = Path(__file__).parent.parent.parent / "data"
 
 st.set_page_config(page_title="SPJ — Assistant", page_icon="💬", layout="wide")
-st.title("AI Assistant")
+st.title("11. 🤖 AI Assistant")
 st.caption("Ask questions about annotation, pipeline status, or SPJ conventions.")
 
 
