@@ -37,6 +37,45 @@ with st.expander("ℹ️ How to use this page", expanded=False):
 """)
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _display_eval_results(metrics: dict) -> None:
+    """Render metrics summary, confusion matrix, and per-class F1."""
+    from spj.evaluator import confusion_matrix_figure, per_class_f1_figure
+
+    mc1, mc2, mc3, mc4 = st.columns(4)
+    mc1.metric("Accuracy", f"{metrics['accuracy']:.2%}")
+    mc2.metric("Top-3 Accuracy", f"{metrics['top3_accuracy']:.2%}")
+    mc3.metric("Test Samples", metrics["n_samples"])
+    mc4.metric("Classes", metrics["n_classes"])
+
+    n_cls = metrics["n_classes"]
+    if n_cls <= 200 and "confusion_matrix" in metrics:
+        st.subheader("Confusion Matrix")
+        cm_fig = confusion_matrix_figure(
+            metrics["confusion_matrix"], metrics["class_labels"],
+        )
+        st.plotly_chart(cm_fig, use_container_width=True)
+    elif n_cls > 200:
+        st.info(
+            f"Confusion matrix skipped ({n_cls} classes — "
+            f"would be {n_cls}×{n_cls} = {n_cls**2:,} cells). "
+            f"See per-class F1 below instead."
+        )
+
+    st.subheader("Per-Class F1 Score")
+    pc = metrics["per_class"]
+    if len(pc) > 100:
+        st.caption(f"Showing top 50 of {len(pc)} classes by F1 score.")
+        pc_sorted = sorted(pc, key=lambda x: x.get("f1", 0), reverse=True)
+        f1_fig = per_class_f1_figure(pc_sorted[:50])
+    else:
+        f1_fig = per_class_f1_figure(pc)
+    st.plotly_chart(f1_fig, use_container_width=True)
+
+
+# ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
 
@@ -100,40 +139,7 @@ with tab_eval:
             else:
                 st.session_state["eval_metrics"] = metrics
                 st.session_state["eval_ckpt_name"] = selected_ckpt
-
-                # Summary metrics
-                mc1, mc2, mc3, mc4 = st.columns(4)
-                mc1.metric("Accuracy", f"{metrics['accuracy']:.2%}")
-                mc2.metric("Top-3 Accuracy", f"{metrics['top3_accuracy']:.2%}")
-                mc3.metric("Test Samples", metrics["n_samples"])
-                mc4.metric("Classes", metrics["n_classes"])
-
-                # Confusion matrix — skip for large label sets (>200 classes)
-                n_cls = metrics["n_classes"]
-                if n_cls <= 200:
-                    st.subheader("Confusion Matrix")
-                    cm_fig = confusion_matrix_figure(
-                        metrics["confusion_matrix"],
-                        metrics["class_labels"],
-                    )
-                    st.plotly_chart(cm_fig, use_container_width=True)
-                else:
-                    st.info(
-                        f"Confusion matrix skipped ({n_cls} classes — "
-                        f"would be {n_cls}×{n_cls} = {n_cls**2:,} cells). "
-                        f"See per-class F1 below instead."
-                    )
-
-                # Per-class F1 — show top 50 for large label sets
-                st.subheader("Per-Class F1 Score")
-                pc = metrics["per_class"]
-                if len(pc) > 100:
-                    st.caption(f"Showing top 50 of {len(pc)} classes by F1 score.")
-                    pc_sorted = sorted(pc, key=lambda x: x.get("f1", 0), reverse=True)
-                    f1_fig = per_class_f1_figure(pc_sorted[:50])
-                else:
-                    f1_fig = per_class_f1_figure(pc)
-                st.plotly_chart(f1_fig, use_container_width=True)
+                _display_eval_results(metrics)
 
                 # Per-class table
                 with st.expander("Per-class details"):
@@ -158,33 +164,7 @@ with tab_eval:
             metrics = st.session_state["eval_metrics"]
             cached_name = st.session_state.get("eval_ckpt_name", "")
             if cached_name == selected_ckpt:
-                from spj.evaluator import confusion_matrix_figure, per_class_f1_figure
-
-                mc1, mc2, mc3, mc4 = st.columns(4)
-                mc1.metric("Accuracy", f"{metrics['accuracy']:.2%}")
-                mc2.metric("Top-3 Accuracy", f"{metrics['top3_accuracy']:.2%}")
-                mc3.metric("Test Samples", metrics["n_samples"])
-                mc4.metric("Classes", metrics["n_classes"])
-
-                n_cls = metrics["n_classes"]
-                if n_cls <= 200:
-                    st.subheader("Confusion Matrix")
-                    st.plotly_chart(
-                        confusion_matrix_figure(metrics["confusion_matrix"], metrics["class_labels"]),
-                        use_container_width=True,
-                    )
-                else:
-                    st.info(f"Confusion matrix skipped ({n_cls} classes).")
-
-                st.subheader("Per-Class F1 Score")
-                pc = metrics["per_class"]
-                if len(pc) > 100:
-                    st.caption(f"Showing top 50 of {len(pc)} classes by F1 score.")
-                    pc_sorted = sorted(pc, key=lambda x: x.get("f1", 0), reverse=True)
-                    f1_fig = per_class_f1_figure(pc_sorted[:50])
-                else:
-                    f1_fig = per_class_f1_figure(pc)
-                st.plotly_chart(f1_fig, use_container_width=True)
+                _display_eval_results(metrics)
 
 
 # ══════════════════════════════════════════════════════════════════════════

@@ -120,18 +120,21 @@ def evaluate_model(
     for i in range(n_samples):
         confidences.append(float(all_probs_arr[i, all_preds_arr[i]]))
 
-    return {
+    result = {
         "accuracy": round(accuracy, 4),
         "top3_accuracy": round(top3_accuracy, 4),
         "n_samples": n_samples,
         "n_classes": n_classes,
         "per_class": per_class,
-        "confusion_matrix": cm.tolist(),
         "class_labels": class_labels,
         "all_preds": all_preds,
         "all_labels": all_labels,
         "all_confidences": confidences,
     }
+    # Skip serializing huge confusion matrices (>200 classes = 200²+ cells)
+    if n_classes <= 200:
+        result["confusion_matrix"] = cm.tolist()
+    return result
 
 
 def save_evaluation_report(

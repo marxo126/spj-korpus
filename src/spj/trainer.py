@@ -373,19 +373,12 @@ class PoseTransformerEncoder(nn.Module):
         )
         self.classifier = nn.Linear(d_model, n_classes)
 
-    def forward(
+    def _embed(
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """
-        Args:
-            x: (batch, seq_len, input_dim)
-            mask: (batch, seq_len) — 1.0 for real frames, 0.0 for padding
-
-        Returns:
-            logits: (batch, n_classes)
-        """
+        """Shared encoder: project → transform → pool. Returns (B, d_model)."""
         h = self.input_proj(x)              # (B, S, d_model)
         h = self.pos_enc(h)
         h = self.dropout(h)
@@ -405,7 +398,22 @@ class PoseTransformerEncoder(nn.Module):
         else:
             h = h.mean(dim=1)
 
-        return self.classifier(h)
+        return h
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Args:
+            x: (batch, seq_len, input_dim)
+            mask: (batch, seq_len) — 1.0 for real frames, 0.0 for padding
+
+        Returns:
+            logits: (batch, n_classes)
+        """
+        return self.classifier(self._embed(x, mask))
 
     def encode(
         self,
@@ -413,24 +421,7 @@ class PoseTransformerEncoder(nn.Module):
         mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """Return pooled embedding before classifier. Shape: (B, d_model)."""
-        h = self.input_proj(x)
-        h = self.pos_enc(h)
-        h = self.dropout(h)
-
-        if mask is not None:
-            key_padding_mask = (mask == 0)
-        else:
-            key_padding_mask = None
-
-        h = self.transformer(h, src_key_padding_mask=key_padding_mask)
-
-        if mask is not None:
-            mask_expanded = mask.unsqueeze(-1)
-            h = (h * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1)
-        else:
-            h = h.mean(dim=1)
-
-        return h
+        return self._embed(x, mask)
 
 
 # ---------------------------------------------------------------------------
