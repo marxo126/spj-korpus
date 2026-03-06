@@ -108,17 +108,31 @@ with tab_eval:
                 mc3.metric("Test Samples", metrics["n_samples"])
                 mc4.metric("Classes", metrics["n_classes"])
 
-                # Confusion matrix
-                st.subheader("Confusion Matrix")
-                cm_fig = confusion_matrix_figure(
-                    metrics["confusion_matrix"],
-                    metrics["class_labels"],
-                )
-                st.plotly_chart(cm_fig, use_container_width=True)
+                # Confusion matrix — skip for large label sets (>200 classes)
+                n_cls = metrics["n_classes"]
+                if n_cls <= 200:
+                    st.subheader("Confusion Matrix")
+                    cm_fig = confusion_matrix_figure(
+                        metrics["confusion_matrix"],
+                        metrics["class_labels"],
+                    )
+                    st.plotly_chart(cm_fig, use_container_width=True)
+                else:
+                    st.info(
+                        f"Confusion matrix skipped ({n_cls} classes — "
+                        f"would be {n_cls}×{n_cls} = {n_cls**2:,} cells). "
+                        f"See per-class F1 below instead."
+                    )
 
-                # Per-class F1
+                # Per-class F1 — show top 50 for large label sets
                 st.subheader("Per-Class F1 Score")
-                f1_fig = per_class_f1_figure(metrics["per_class"])
+                pc = metrics["per_class"]
+                if len(pc) > 100:
+                    st.caption(f"Showing top 50 of {len(pc)} classes by F1 score.")
+                    pc_sorted = sorted(pc, key=lambda x: x.get("f1", 0), reverse=True)
+                    f1_fig = per_class_f1_figure(pc_sorted[:50])
+                else:
+                    f1_fig = per_class_f1_figure(pc)
                 st.plotly_chart(f1_fig, use_container_width=True)
 
                 # Per-class table
@@ -152,17 +166,25 @@ with tab_eval:
                 mc3.metric("Test Samples", metrics["n_samples"])
                 mc4.metric("Classes", metrics["n_classes"])
 
-                st.subheader("Confusion Matrix")
-                st.plotly_chart(
-                    confusion_matrix_figure(metrics["confusion_matrix"], metrics["class_labels"]),
-                    use_container_width=True,
-                )
+                n_cls = metrics["n_classes"]
+                if n_cls <= 200:
+                    st.subheader("Confusion Matrix")
+                    st.plotly_chart(
+                        confusion_matrix_figure(metrics["confusion_matrix"], metrics["class_labels"]),
+                        use_container_width=True,
+                    )
+                else:
+                    st.info(f"Confusion matrix skipped ({n_cls} classes).")
 
                 st.subheader("Per-Class F1 Score")
-                st.plotly_chart(
-                    per_class_f1_figure(metrics["per_class"]),
-                    use_container_width=True,
-                )
+                pc = metrics["per_class"]
+                if len(pc) > 100:
+                    st.caption(f"Showing top 50 of {len(pc)} classes by F1 score.")
+                    pc_sorted = sorted(pc, key=lambda x: x.get("f1", 0), reverse=True)
+                    f1_fig = per_class_f1_figure(pc_sorted[:50])
+                else:
+                    f1_fig = per_class_f1_figure(pc)
+                st.plotly_chart(f1_fig, use_container_width=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════
