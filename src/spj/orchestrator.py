@@ -286,10 +286,12 @@ def run_retrain_cycle(
 def select_best_checkpoint(
     models_dir: Path,
     evaluations_dir: Path,
+    min_classes: int = 200,
 ) -> Optional[str]:
-    """Select the best checkpoint by validation accuracy.
+    """Select the best word-level checkpoint for inference.
 
-    Checks evaluation reports first; falls back to checkpoint metadata.
+    Prefers models with n_classes >= min_classes (skips category-only models).
+    Among qualifying models, picks highest validation accuracy.
     Returns the checkpoint filename, or None.
     """
     from spj.trainer import list_checkpoints
@@ -297,18 +299,20 @@ def select_best_checkpoint(
     models_dir = Path(models_dir)
     evaluations_dir = Path(evaluations_dir)
 
-    # Try evaluation reports first
     best_acc = -1.0
     best_name = None
 
+    # Try evaluation reports first
     if evaluations_dir.exists():
         for json_file in evaluations_dir.glob("*_eval.json"):
             try:
                 report = json.loads(json_file.read_text())
+                n_cls = report.get("n_classes", 0)
+                if n_cls < min_classes:
+                    continue
                 acc = report.get("accuracy", 0.0)
                 if acc > best_acc:
                     best_acc = acc
-                    # Derive checkpoint name from eval filename
                     stem = json_file.stem.replace("_eval", "")
                     best_name = f"{stem}.pt"
             except Exception:
@@ -318,6 +322,9 @@ def select_best_checkpoint(
     if best_name is None:
         checkpoints = list_checkpoints(models_dir)
         for ckpt in checkpoints:
+            n_cls = ckpt.get("n_classes", 0)
+            if n_cls < min_classes:
+                continue
             acc = ckpt.get("val_acc", 0.0)
             if acc > best_acc:
                 best_acc = acc

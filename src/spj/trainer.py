@@ -368,7 +368,9 @@ class PoseTransformerEncoder(nn.Module):
             dropout=dropout,
             batch_first=True,
         )
-        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=n_layers)
+        self.transformer = nn.TransformerEncoder(
+            encoder_layer, num_layers=n_layers, enable_nested_tensor=False,
+        )
         self.classifier = nn.Linear(d_model, n_classes)
 
     def forward(
@@ -404,6 +406,31 @@ class PoseTransformerEncoder(nn.Module):
             h = h.mean(dim=1)
 
         return self.classifier(h)
+
+    def encode(
+        self,
+        x: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Return pooled embedding before classifier. Shape: (B, d_model)."""
+        h = self.input_proj(x)
+        h = self.pos_enc(h)
+        h = self.dropout(h)
+
+        if mask is not None:
+            key_padding_mask = (mask == 0)
+        else:
+            key_padding_mask = None
+
+        h = self.transformer(h, src_key_padding_mask=key_padding_mask)
+
+        if mask is not None:
+            mask_expanded = mask.unsqueeze(-1)
+            h = (h * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1)
+        else:
+            h = h.mean(dim=1)
+
+        return h
 
 
 # ---------------------------------------------------------------------------

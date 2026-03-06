@@ -46,6 +46,9 @@ ANNOTATIONS_DIR = DATA_DIR / "annotations"
 SUBTITLES_DIR  = DATA_DIR / "subtitles"
 PAIRINGS_CSV   = DATA_DIR / "training" / "pairings.csv"
 GLOSSARY_JSON  = DATA_DIR / "training" / "glossary.json"
+MODELS_DIR     = DATA_DIR / "models"
+EXPORT_DIR     = DATA_DIR / "training" / "export"
+EMBEDDING_INDEX_PATH = MODELS_DIR / "embedding_index.npz"
 
 # Review status values (display-only — persistent status uses PST_* constants)
 _RST_PENDING  = "pending"
@@ -102,6 +105,25 @@ def _extract_segment_b64(
 @st.cache_data(ttl=300)
 def _read_prepartner-dictns_cached(eaf_path_str: str) -> list[dict]:
     return read_prepartner-dictns_from_eaf(Path(eaf_path_str))
+
+
+@st.cache_resource
+def _load_similarity_model():
+    """Load model + embedding index for similarity search (cached once)."""
+    if not EMBEDDING_INDEX_PATH.exists():
+        return None, None, None
+    from spj.inference import load_embedding_index
+    from spj.orchestrator import select_best_checkpoint
+    best_name = select_best_checkpoint(MODELS_DIR, DATA_DIR / "evaluations")
+    if not best_name:
+        return None, None, None
+    from spj.trainer import load_checkpoint
+    ckpt_path = MODELS_DIR / best_name
+    if not ckpt_path.exists():
+        return None, None, None
+    model, _le, config, _meta = load_checkpoint(ckpt_path, device="cpu")
+    index = load_embedding_index(EMBEDDING_INDEX_PATH)
+    return model, index, config
 
 
 @st.cache_data(ttl=600, max_entries=3)
@@ -794,6 +816,44 @@ if _was_trimmed:
         f"Trimmed: {_fmt_ms(_use_start_ms)}\u2192{_fmt_ms(_use_end_ms)} "
         f"(was {_fmt_ms(_orig_start)}\u2192{_fmt_ms(_orig_end)})"
     )
+
+# ---------------------------------------------------------------------------
+# Similar signs panel — pose similarity search
+# ---------------------------------------------------------------------------
+
+_sim_model, _sim_index, _sim_config = _load_similarity_model()
+if _sim_model is not None and _sim_index is not None and _pose_loaded:
+    with st.expander("Similar signs (pose matching)", expanded=False):
+        try:
+            from spj.inference import find_similar_signs
+            from spj.training_data import SL_LANDMARK_INDICES
+
+            # Extract query pose from current prepartner-dictn segment
+            _q_start = int(_use_start_ms * p_fps / 1000)
+            _q_end = int(_use_end_ms * p_fps / 1000)
+            _q_start = max(0, min(_q_start, p_data.shape[0] - 1))
+            _q_end = max(_q_start + 1, min(_q_end, p_data.shape[0]))
+            _q_pose = p_data[_q_start:_q_end, 0, :, :]  # (T, 543, 3)
+            _q_pose = _q_pose[:, SL_LANDMARK_INDICES, :]  # (T, 96, 3)
+
+            _similar = find_similar_signs(
+                _sim_model, _q_pose, _sim_index,
+                max_seq_len=_sim_config.max_seq_len,
+                top_k=8,
+            )
+
+            if _similar:
+                _sim_cols = st.columns(min(len(_similar), 4))
+                for si, s in enumerate(_similar):
+                    with _sim_cols[si % 4]:
+                        _pct = f"{s['similarity']:.0%}"
+                        _match = s['label'] == pred['predicted_gloss']
+                        _icon = "**" if _match else ""
+                        st.markdown(f"{_icon}{s['label']}{_icon}  \n`{_pct}`")
+            else:
+                st.caption("No similar signs found.")
+        except Exception as exc:
+            st.caption(f"Similarity search unavailable: {exc}")
 
 # ---------------------------------------------------------------------------
 # Cut/Split mode — split prepartner-dictn into multiple signs

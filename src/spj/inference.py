@@ -359,6 +359,229 @@ def read_prepartner-dictns_from_eaf(eaf_path: Path) -> list[dict]:
     return prepartner-dictns
 
 
+# ---------------------------------------------------------------------------
+# Embedding index — pose similarity search
+# ---------------------------------------------------------------------------
+
+def build_embedding_index(
+    model: "PoseTransformerEncoder",
+    manifest_df: "pd.DataFrame",
+    npz_dir: Path,
+    max_seq_len: int = 300,
+    device: Optional[torch.device] = None,
+    batch_size: int = 256,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+) -> dict:
+    """Extract embeddings for all NPZ segments and build a similarity index.
+
+    Args:
+        model: Trained PoseTransformerEncoder (uses .encode() method).
+        manifest_df: DataFrame with 'npz_file' and 'label' columns.
+        npz_dir: Directory containing .npz segment files.
+        max_seq_len: Padding/truncation length.
+        device: Torch device.
+        batch_size: Batch size for encoding.
+        progress_callback: Called as progress_callback(done, total).
+
+    Returns:
+        Dict with:
+            embeddings: np.ndarray (N, d_model) — L2-normalized
+            labels: list[str] — label per segment
+            npz_files: list[str] — npz filename per segment
+    """
+    import pandas as pd
+
+    if device is None:
+        device = next(model.parameters()).device
+
+    model.eval()
+    npz_dir = Path(npz_dir)
+
+    # Derive label column
+    df = manifest_df.copy()
+    if "label" not in df.columns:
+        if "reviewed_text" in df.columns:
+            df["label"] = df["reviewed_text"].where(
+                df["reviewed_text"].astype(str).str.strip() != "", df["text"]
+            )
+        elif "text" in df.columns:
+            df["label"] = df["text"]
+
+    # Resolve npz file column (manifest may use npz_path or npz_file)
+    npz_col = "npz_file"
+    if npz_col not in df.columns and "npz_path" in df.columns:
+        df[npz_col] = df["npz_path"].apply(lambda p: Path(p).name)
+
+    # Filter valid rows
+    valid = df.dropna(subset=[npz_col, "label"])
+    valid = valid[valid["label"].astype(str).str.strip() != ""]
+
+    all_embeddings = []
+    all_labels = []
+    all_files = []
+    total = len(valid)
+
+    for batch_start in range(0, total, batch_size):
+        batch_rows = valid.iloc[batch_start:batch_start + batch_size]
+        features_list = []
+        masks_list = []
+        batch_labels = []
+        batch_files = []
+
+        for _, row in batch_rows.iterrows():
+            npz_name = str(row[npz_col])
+            npz_path = npz_dir / npz_name
+            if not npz_path.exists():
+                continue
+
+            data = np.load(str(npz_path))
+            pose = data["pose"]  # (T, N_landmarks, 3)
+            T = pose.shape[0]
+            feat = pose.reshape(T, -1).astype(np.float32)
+
+            if T >= max_seq_len:
+                feat = feat[:max_seq_len]
+                mask = np.ones(max_seq_len, dtype=np.float32)
+            else:
+                pad_len = max_seq_len - T
+                feat = np.concatenate([feat, np.zeros((pad_len, feat.shape[1]), dtype=np.float32)])
+                mask = np.concatenate([np.ones(T, dtype=np.float32), np.zeros(pad_len, dtype=np.float32)])
+
+            features_list.append(feat)
+            masks_list.append(mask)
+            label = str(row["label"]).strip()
+            batch_labels.append(label)
+            batch_files.append(npz_name)
+
+        if not features_list:
+            continue
+
+        features_t = torch.from_numpy(np.stack(features_list)).to(device)
+        masks_t = torch.from_numpy(np.stack(masks_list)).to(device)
+
+        with torch.no_grad():
+            emb = model.encode(features_t, masks_t)  # (B, d_model)
+            emb = emb.cpu().numpy()
+
+        all_embeddings.append(emb)
+        all_labels.extend(batch_labels)
+        all_files.extend(batch_files)
+
+        if progress_callback:
+            progress_callback(min(batch_start + batch_size, total), total)
+
+    if not all_embeddings:
+        return {"embeddings": np.empty((0, 0)), "labels": [], "npz_files": []}
+
+    embeddings = np.concatenate(all_embeddings, axis=0)
+    # L2 normalize for cosine similarity via dot product
+    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms = np.maximum(norms, 1e-8)
+    embeddings = embeddings / norms
+
+    return {
+        "embeddings": embeddings,
+        "labels": all_labels,
+        "npz_files": all_files,
+    }
+
+
+def save_embedding_index(index: dict, path: Path) -> None:
+    """Save embedding index to .npz file."""
+    np.savez_compressed(
+        str(path),
+        embeddings=index["embeddings"],
+        labels=np.array(index["labels"], dtype=object),
+        npz_files=np.array(index["npz_files"], dtype=object),
+    )
+    logger.info("Saved embedding index (%d entries) to %s", len(index["labels"]), path)
+
+
+def load_embedding_index(path: Path) -> dict:
+    """Load embedding index from .npz file."""
+    data = np.load(str(path), allow_pickle=True)
+    return {
+        "embeddings": data["embeddings"],
+        "labels": data["labels"].tolist(),
+        "npz_files": data["npz_files"].tolist(),
+    }
+
+
+def find_similar_signs(
+    model: "PoseTransformerEncoder",
+    query_pose: np.ndarray,
+    index: dict,
+    max_seq_len: int = 300,
+    device: Optional[torch.device] = None,
+    top_k: int = 5,
+) -> list[dict]:
+    """Find top-K most similar signs from the embedding index.
+
+    Args:
+        model: Same model used to build the index.
+        query_pose: Pose array (T, N_landmarks, 3) — already landmark-filtered.
+        index: Output of build_embedding_index() or load_embedding_index().
+        max_seq_len: Padding/truncation length.
+        device: Torch device.
+        top_k: Number of results to return.
+
+    Returns:
+        List of dicts: [{label, similarity, npz_file}, ...]
+    """
+    if device is None:
+        device = next(model.parameters()).device
+
+    model.eval()
+    embeddings = index["embeddings"]
+    if embeddings.shape[0] == 0:
+        return []
+
+    # Prepare query
+    T = query_pose.shape[0]
+    feat = query_pose.reshape(T, -1).astype(np.float32)
+
+    if T >= max_seq_len:
+        feat = feat[:max_seq_len]
+        mask = np.ones(max_seq_len, dtype=np.float32)
+    else:
+        pad_len = max_seq_len - T
+        feat = np.concatenate([feat, np.zeros((pad_len, feat.shape[1]), dtype=np.float32)])
+        mask = np.concatenate([np.ones(T, dtype=np.float32), np.zeros(pad_len, dtype=np.float32)])
+
+    feat_t = torch.from_numpy(feat).unsqueeze(0).to(device)
+    mask_t = torch.from_numpy(mask).unsqueeze(0).to(device)
+
+    with torch.no_grad():
+        q_emb = model.encode(feat_t, mask_t).cpu().numpy()[0]
+
+    # L2 normalize query
+    q_norm = np.linalg.norm(q_emb)
+    if q_norm > 1e-8:
+        q_emb = q_emb / q_norm
+
+    # Cosine similarity = dot product (both normalized)
+    similarities = embeddings @ q_emb  # (N,)
+
+    # Top-K (deduplicate by label — show each label only once)
+    sorted_indices = np.argsort(similarities)[::-1]
+    results = []
+    seen_labels = set()
+    for idx in sorted_indices:
+        label = index["labels"][idx]
+        if label in seen_labels:
+            continue
+        seen_labels.add(label)
+        results.append({
+            "label": label,
+            "similarity": round(float(similarities[idx]), 4),
+            "npz_file": index["npz_files"][idx],
+        })
+        if len(results) >= top_k:
+            break
+
+    return results
+
+
 def prepartner-dictns_timeline_figure(
     prepartner-dictns: list[dict],
     duration_sec: float,
