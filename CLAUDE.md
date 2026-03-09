@@ -352,7 +352,7 @@ MCP tools and orchestrator auto-detect the preset from the checkpoint.
 
 | Module | Public API |
 |--------|-----------|
-| `src/spj/trainer.py` | `LabelEncoder`, `PoseSegmentDataset`, `AugmentedPoseDataset`, `split_dataset()`, `PoseTransformerEncoder`, `TrainingConfig`, `TrainingState`, `train_model()`, `load_checkpoint()`, `list_checkpoints()` |
+| `src/spj/trainer.py` | `LabelEncoder`, `PoseSegmentDataset`, `AugmentedPoseDataset`, `split_dataset()`, `PoseTransformerEncoder`, `Conv1DTransformerEncoder`, `TrainingConfig`, `TrainingState`, `train_model()`, `load_checkpoint()`, `list_checkpoints()`, `apply_feature_mode()`, `FEATURE_MODES`, `MODEL_TYPES` |
 | `src/spj/evaluator.py` | `evaluate_model()`, `save_evaluation_report()`, `confusion_matrix_figure()`, `per_class_f1_figure()`, `compare_models_table()` |
 | `src/spj/inference.py` | `predict_segments()`, `write_prepartner-dictns_to_eaf()`, `read_prepartner-dictns_from_eaf()`, `prepartner-dictns_timeline_figure()` |
 | `src/spj/training_data.py` | `align_pose_to_subtitles()`, `build_alignment_table()`, `import_single_sign_videos()`, `export_segment_npz()`, `export_sign_npz()`, `write_training_config()`, `select_sl_landmarks()`, `make_pairing_dict()`, `parse_gloss_value()`, `GLOSS_RE`, `harvest_eaf_batch()`, `harvest_eaf_auto()`, `SL_LANDMARK_INDICES`, `SL_LANDMARK_PRESETS`, `SL_N_LANDMARKS`, `SL_INPUT_DIM`, `preset_from_input_dim()` |
@@ -362,17 +362,38 @@ MCP tools and orchestrator auto-detect the preset from the checkpoint.
 | `src/spj/ssl_pretrain.py` | `PretrainConfig`, `PretrainState`, `MaskedPoseModel`, `UnlabeledPoseDataset`, `pretrain_masked_pose()`, `load_pretrained_encoder()`, `list_pretrain_checkpoints()` |
 | `src/spj/glossary.py` | `Glossary`, `load_glossary()`, `save_glossary()`, `normalize_word()`, `tokenize_slovak()` |
 
-### Model Architecture: PoseTransformerEncoder
+### Model Architectures
+
+Two model types available via `TrainingConfig.model_type`:
+
+**`transformer`** (original PoseTransformerEncoder):
 ```
-Input: (batch, max_seq_len, input_dim) # auto-detected: 288 (compact), 444 (extended), 522 (full)
-  → Linear → d_model (128)
-  → Sinusoidal positional encoding
-  → 3× TransformerEncoderLayer (4 heads, d_ff=256)
-  → Masked mean pooling
-  → Linear → n_classes
+Input → Linear → d_model → SinusoidalPE → N× TransformerEncoder → MaskedMeanPool → Linear → n_classes
 ```
-500K params. Variable-length sequences padded to `max_seq_len`, attention mask ignores padding.
+~500K params. Good baseline.
+
+**`conv1d_transformer`** (Conv1DTransformerEncoder — Kaggle 1st place):
+```
+Input → Linear+BN → [3× Conv1DBlock(k=17) → TransformerBlock] ×2 → Linear(d*2) → GAP → Dropout → Linear → n_classes
+```
+~900K params. Conv1DBlock = Dense(expand) → CausalDWConv1D → BN → Dense(project) + residual.
+**9x better than baseline in method comparison test** (12.93% vs 1.41% val acc, 20 epochs).
+
+### Feature Modes
+
+`TrainingConfig.feature_mode` controls input preprocessing of (T, N, 3) pose:
+
+| Mode | Transform | Output dim (96 lm) |
+|------|-----------|-------------------|
+| `raw` (default) | Flatten (x,y,z) | 288 |
+| `velocity` | pos + dx + dx2 | 864 |
+| `xy_velocity` | Drop z, then + dx + dx2 | 576 |
+| `norm_xy_velocity` | Nose-normalize + drop z + dx + dx2 | 576 |
+
+Best combo: **`conv1d_transformer` + `norm_xy_velocity`** (from Kaggle 1st place research).
+
 Input dim is auto-detected from NPZ files at training time and from checkpoint weights at load time.
+`preset_from_input_dim()` handles all feature mode multipliers (×2, ×3, ×6, ×9).
 
 ### Transfer Learning — Category → Word (Best Approach)
 The category model (`cat_v2_ep55_acc0.4493.pt`, 102 categories, 44.9% val) serves as the encoder initialization for word-level training. Two-phase fine-tuning:

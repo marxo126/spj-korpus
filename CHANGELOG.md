@@ -9,6 +9,9 @@
 - Standalone script `tools/split_category-source_poses.py` for batch dual-view extraction
 - "Split dual-view" checkbox in Page 2 (Pose Extraction) — auto-filters to category-source videos
 - Data augmentation wired into `train_model()` via `AugmentedPoseDataset` (10x variants: temporal crop, speed, noise, scale)
+- 4 new augmentations: hand mirroring (L↔R swap + X flip), spatial rotation (Y-axis ±15°), joint dropout (5-15% landmarks zeroed), temporal masking (1-3 random frame spans zeroed)
+- Per-augmentation flags in `TrainingConfig` and `AugmentedPoseDataset` — each augmentation can be individually enabled/disabled
+- `tools/augment_search.py` — greedy hill-climbing over augmentation combos with short probe runs, auto full-train on winner
 - `augment` and `n_augments` fields in `TrainingConfig`
 - Augmentation controls in Page 8 (Training) with effective sample count display
 - RH+LH unit grouping — auto-pair overlapping right/left hand prepartner-dictns as one review unit

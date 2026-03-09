@@ -198,11 +198,13 @@ with tab_predict:
                                 continue
 
                             # Classify segments
+                            _feat_mode = config.feature_mode
                             prepartner-dictns = predict_segments(
                                 model, label_encoder, segments,
                                 data, fps,
                                 max_seq_len=config.max_seq_len,
                                 landmark_indices=_lm_indices,
+                                feature_mode=_feat_mode,
                             )
 
                             # Ensure EAF exists

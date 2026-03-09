@@ -629,10 +629,12 @@ def spj_run_inference(video_filename: str, checkpoint_filename: str) -> dict:
         pose_data, conf_data, fps = load_pose_arrays(pose_path)
         segments = detect_sign_segments(pose_data, conf_data, fps)
 
+        feature_mode = config.feature_mode
         prepartner-dictns = predict_segments(
             model, label_encoder, segments, pose_data, fps,
             max_seq_len=config.max_seq_len,
             landmark_indices=lm_indices,
+            feature_mode=feature_mode,
         )
 
         eaf_path = DATA_DIR / "annotations" / f"{stem}.eaf"

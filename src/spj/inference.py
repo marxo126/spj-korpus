@@ -24,11 +24,12 @@ def predict_segments(
     max_seq_len: int = 300,
     device: Optional[torch.device] = None,
     landmark_indices: Optional[list[int]] = None,
+    feature_mode: str = "raw",
 ) -> list[dict]:
     """Classify each detected sign segment using the trained model.
 
     Args:
-        model: Trained PoseTransformerEncoder in eval mode.
+        model: Trained model (PoseTransformerEncoder or Conv1DTransformerEncoder).
         label_encoder: Maps indices to gloss labels.
         segments: Output of detect_sign_segments() — {'right': [...], 'left': [...]}.
         pose_data: Full pose array (T, 1, 543, 3).
@@ -37,6 +38,8 @@ def predict_segments(
         device: Torch device (inferred from model if None).
         landmark_indices: If set, select only these landmarks before inference.
             Use SL_LANDMARK_INDICES from training_data to match training format.
+        feature_mode: Feature transform mode matching training config.
+            One of "raw", "velocity", "xy_velocity", "norm_xy_velocity".
 
     Returns:
         List of dicts with keys:
@@ -45,6 +48,8 @@ def predict_segments(
     """
     if device is None:
         device = next(model.parameters()).device
+
+    from spj.trainer import apply_feature_mode, _pad_or_truncate
 
     model.eval()
     prepartner-dictns = []
@@ -66,23 +71,12 @@ def predict_segments(
 
             T_seg = segment_pose.shape[0]
 
-            # Flatten to (T_seg, N*3)
-            features = segment_pose.reshape(T_seg, -1).astype(np.float32)
+            # Apply feature transform (matches training feature_mode)
+            features = apply_feature_mode(
+                segment_pose.astype(np.float32), feature_mode,
+            )  # (T_seg, F)
 
-            # Pad or truncate
-            if T_seg >= max_seq_len:
-                features = features[:max_seq_len]
-                mask = np.ones(max_seq_len, dtype=np.float32)
-            else:
-                pad_len = max_seq_len - T_seg
-                features = np.concatenate([
-                    features,
-                    np.zeros((pad_len, features.shape[1]), dtype=np.float32),
-                ], axis=0)
-                mask = np.concatenate([
-                    np.ones(T_seg, dtype=np.float32),
-                    np.zeros(pad_len, dtype=np.float32),
-                ])
+            features, mask = _pad_or_truncate(features, max_seq_len)
 
             # Forward pass
             features_t = torch.from_numpy(features).unsqueeze(0).to(device)
@@ -183,6 +177,7 @@ def predict_batch(
     landmark_indices: "Optional[list[int]]" = None,
     min_pose_bytes: int = 10_000,
     progress_callback: "Optional[Callable[[int, int, str], None]]" = None,
+    feature_mode: str = "raw",
 ) -> dict:
     """Run inference on all videos in the inventory.
 
@@ -260,6 +255,7 @@ def predict_batch(
                 model, label_encoder, segments, pose_data, fps,
                 max_seq_len=max_seq_len, device=device,
                 landmark_indices=landmark_indices,
+                feature_mode=feature_mode,
             )
 
             # Ensure EAF exists

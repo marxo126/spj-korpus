@@ -188,13 +188,24 @@ SL_N_LANDMARKS = len(SL_LANDMARK_INDICES)
 SL_INPUT_DIM = SL_N_LANDMARKS * 3
 
 
-_DIM_TO_PRESET: dict[int, str] = {
-    len(v) * 3: k for k, v in SL_LANDMARK_PRESETS.items()
-}
+_DIM_TO_PRESET: dict[int, str] = {}
+for _k, _v in SL_LANDMARK_PRESETS.items():
+    _n = len(_v)
+    # raw: N*3, velocity: N*9, xy_velocity/norm_xy_velocity: N*6, xy_only: N*2
+    for _mult in (3, 9, 6, 2):
+        _dim = _n * _mult
+        if _dim in _DIM_TO_PRESET and _DIM_TO_PRESET[_dim] != _k:
+            logger.warning("Preset dim collision: %d maps to both %s and %s",
+                           _dim, _DIM_TO_PRESET[_dim], _k)
+        _DIM_TO_PRESET[_dim] = _k
 
 
 def preset_from_input_dim(input_dim: int) -> str | None:
-    """Return preset name matching the given input_dim, or None."""
+    """Return preset name matching the given input_dim, or None.
+
+    Handles all feature modes: raw (N*3), velocity (N*9),
+    xy_velocity/norm_xy_velocity (N*6), xy_only (N*2).
+    """
     return _DIM_TO_PRESET.get(input_dim)
 
 
@@ -1193,6 +1204,7 @@ def suggest_sign_pairings(
     prepartner-dictns = predict_segments(
         model, label_encoder, segments, pose_data, fps,
         max_seq_len=config.get("max_seq_len", 300),
+        feature_mode=config.get("feature_mode", "raw"),
     )
 
     # Match subtitle words to glosses for cross-referencing

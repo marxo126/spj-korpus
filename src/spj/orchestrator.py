@@ -400,10 +400,12 @@ def run_inference_with_best(
                 pose_data, conf_data, fps = load_pose_arrays(pose_path)
                 segments = detect_sign_segments(pose_data, conf_data, fps)
 
+                feature_mode = config.feature_mode
                 prepartner-dictns = predict_segments(
                     model, label_encoder, segments, pose_data, fps,
                     max_seq_len=config.max_seq_len,
                     landmark_indices=lm_indices,
+                    feature_mode=feature_mode,
                 )
 
                 # Write to EAF
