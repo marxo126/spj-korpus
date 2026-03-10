@@ -879,6 +879,7 @@ def train_model(
     state: TrainingState,
     output_dir: Path,
     pretrained_path: Optional[Path] = None,
+    resume_path: Optional[Path] = None,
 ) -> None:
     """Train PoseTransformerEncoder. Designed to run in a background thread.
 
@@ -889,6 +890,10 @@ def train_model(
         pretrained_path: Optional path to a pretrained encoder checkpoint
             from ssl_pretrain.py. If provided, encoder weights are initialized
             from this checkpoint before training.
+        resume_path: Optional path for resume checkpoint. If the file exists,
+            training resumes from that epoch. After each epoch, a resume
+            checkpoint is saved to this path (model + optimizer + scheduler +
+            epoch state). Set to None to disable resume support.
     """
     try:
         state.running = True
@@ -987,8 +992,34 @@ def train_model(
         best_val_acc = 0.0
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
+        start_epoch = 1
 
-        for epoch in range(1, config.epochs + 1):
+        # Resume from checkpoint if available
+        if resume_path and Path(resume_path).exists():
+            logger.info("Resuming from %s", resume_path)
+            resume_ckpt = torch.load(str(resume_path), map_location="cpu",
+                                     weights_only=False)
+            model.load_state_dict(resume_ckpt["model_state_dict"])
+            model = model.to(device)
+            optimizer.load_state_dict(resume_ckpt["optimizer_state_dict"])
+            scheduler.load_state_dict(resume_ckpt["scheduler_state_dict"])
+            start_epoch = resume_ckpt["epoch"] + 1
+            best_val_acc = resume_ckpt.get("best_val_acc", 0.0)
+            state.best_val_acc = round(best_val_acc, 4)
+            state.best_epoch = resume_ckpt.get("best_epoch", 0)
+            state.train_losses = resume_ckpt.get("train_losses", [])
+            state.train_accs = resume_ckpt.get("train_accs", [])
+            state.val_losses = resume_ckpt.get("val_losses", [])
+            state.val_accs = resume_ckpt.get("val_accs", [])
+            # Restore phase state for freeze/unfreeze
+            if config.freeze_epochs > 0 and start_epoch > config.freeze_epochs:
+                for param in model.parameters():
+                    param.requires_grad = True
+                state.phase = 2
+            logger.info("Resumed at epoch %d, best_val_acc=%.4f", start_epoch,
+                        best_val_acc)
+
+        for epoch in range(start_epoch, config.epochs + 1):
             if state.stop_requested:
                 logger.info("Training stopped by user at epoch %d", epoch)
                 break
@@ -1093,6 +1124,21 @@ def train_model(
                 "Epoch %d/%d — train_loss=%.4f train_acc=%.4f val_loss=%.4f val_acc=%.4f",
                 epoch, config.epochs, train_loss, train_acc, val_loss, val_acc,
             )
+
+            # Save resume checkpoint after each epoch
+            if resume_path:
+                torch.save({
+                    "model_state_dict": model.state_dict(),
+                    "optimizer_state_dict": optimizer.state_dict(),
+                    "scheduler_state_dict": scheduler.state_dict(),
+                    "epoch": epoch,
+                    "best_val_acc": best_val_acc,
+                    "best_epoch": state.best_epoch,
+                    "train_losses": state.train_losses,
+                    "train_accs": state.train_accs,
+                    "val_losses": state.val_losses,
+                    "val_accs": state.val_accs,
+                }, str(resume_path))
 
             # Early stopping
             if config.patience > 0:
