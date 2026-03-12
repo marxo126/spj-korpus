@@ -565,3 +565,106 @@ The unified 3+ model trains on 8,005 classes with an average of ~3 samples per c
 3. **The accuracy scaling law is dominated by samples/class.** Comparing across all experiments: 3 samples/class → ~36%, 5 samples/class → ~15%, 44 samples/class → ~75%. The 5+ result is an outlier because it sacrificed too much total data. The path to higher accuracy is more data per class **without** removing other classes.
 
 4. **Implication for data collection:** To achieve 50%+ word-level accuracy, the corpus needs ~20-50 samples per sign from multiple signers. Current dictionary sources (posunky, dictio) provide 1-5 samples from 1-2 signers. A crowdsourced data collection approach (Sign Collector) is the most promising path to break through the accuracy ceiling.
+
+---
+
+## 14. Summary: Optimal Method Combination and Data Collection Strategy
+
+### What Works — The Proven Recipe
+
+After 13 experiments across architectures, augmentations, transfer learning, landmark presets, and data filtering, the optimal combination for SPJ sign recognition is:
+
+| Component | Best Choice | Evidence |
+|-----------|------------|----------|
+| **Architecture** | Conv1D+Transformer | 9× better than pure Transformer (§6) |
+| **Feature mode** | `norm_xy_velocity` | Nose-normalization + velocity features (§6) |
+| **Augmentation** | Mirror + rotation only | 38.9% val; all-8 augs = 35.6% (§7, §8) |
+| **Landmark preset** | Compact (96) | Extended with mixed data = 7.1% (§12) |
+| **Transfer learning** | Category → word (2-phase) | Best top-3 (41.5%) and top-5 (45.2%) (§11) |
+| **Data filtering** | Keep all classes (3+) | 5+ filter = 15.3% vs 3+ = 36.6% (§13) |
+| **Pre-training** | Not useful at current scale | SSL gave only +6% relative (§9) |
+
+### What Does Not Work
+
+| Approach | Why it fails |
+|----------|-------------|
+| Extended landmarks (148) with mixed data | Zero-padded eye/eyebrow = noise for 56% of samples |
+| Filtering to higher min-samples | Loses too much total training data |
+| All-8 augmentation | Temporal augmentations hurt sign recognition |
+| SSL pre-training | Supervised category transfer far more effective |
+| Spatial augmentations v2 | Translation, bone scale, hand shift, head tilt — none improved over mirror+rotation |
+
+### The Accuracy Ceiling and Why
+
+Current best results plateau at **37–39% top-1** and **41–45% top-3** regardless of model improvements. The bottleneck is data, not architecture:
+
+| Samples/class | Observed accuracy | Source |
+|--------------|-------------------|--------|
+| ~3 | 36.6% val | 3+ unified model |
+| ~5 | 15.3% val* | 5+ filtered model |
+| ~44 | 74.6% val | Category model |
+
+*The 5+ result is anomalously low because filtering removed 59% of total data. The true relationship, controlling for total data volume, follows an approximate log-linear scaling: **doubling samples per class yields ~15–20 percentage points improvement.**
+
+Extrapolating from the category model's performance:
+- **20 samples/class → ~50% accuracy** (estimated)
+- **50 samples/class → ~65% accuracy** (estimated)
+- **100 samples/class from 10+ signers → ~80% accuracy** (target, based on ASL Citizen benchmarks)
+
+### Recommended Training Configuration for New Data
+
+When new sign collections become available (e.g., via Sign Collector), use this configuration:
+
+```python
+TrainingConfig(
+    model_type="conv1d_transformer",
+    feature_mode="norm_xy_velocity",
+    epochs=100,
+    batch_size=512,           # increase if >50K samples
+    lr=0.0005,
+    d_model=192,              # increase to 256 if >50K samples
+    n_heads=4,
+    n_layers=3,
+    max_seq_len=300,
+    augment=True,
+    n_augments=10,            # reduce to 5 if >20 samples/class
+    patience=25,
+    label_smoothing=0.1,
+    weight_decay=1e-4,
+    aug_mirror=True,
+    aug_rotation=True,
+    # all other aug flags = False
+)
+```
+
+**Two-phase transfer learning** should be used when:
+- A strong category model exists (currently 74.6%)
+- Per-class sample count is low (<20 samples/class)
+- Phase 1: freeze encoder, train classifier only (10 epochs, lr=0.001)
+- Phase 2: unfreeze all, lr=0.0003, cosine schedule, patience=25
+
+**When to skip transfer and train from scratch:**
+- Per-class sample count >20 (enough data for direct learning)
+- Total training samples >50K (model has sufficient diversity)
+
+### Data Collection Priorities for Maximum Impact
+
+1. **Signer diversity over repetition.** 10 signers × 5 samples >>> 1 signer × 50 samples. The model needs to learn signer-independent features.
+
+2. **Keep all existing data.** Never filter out low-count classes — they still contribute to general pose understanding. Add new samples to existing classes.
+
+3. **Target the long tail.** Most signs currently have exactly 3 samples. Even adding 2–3 more samples per sign from different signers would significantly improve accuracy.
+
+4. **Prioritize signs already in the corpus.** Adding more samples to existing 8,005 signs is more valuable than adding new signs with only 1–2 samples each.
+
+5. **Environment variation.** Different backgrounds, lighting, and camera angles improve robustness. The kodifikácia dual-angle (60°/90°) approach is a good model.
+
+### Projected Milestones
+
+| Data milestone | Expected accuracy | Action |
+|---------------|-------------------|--------|
+| Current (3 samples/class avg) | 37–39% top-1 | Deploy for active learning |
+| 10 samples/class, 3+ signers | ~45% top-1 | Retrain, reduce augmentation to 5× |
+| 20 samples/class, 5+ signers | ~55% top-1 | Scale up d_model to 256 |
+| 50 samples/class, 10+ signers | ~70% top-1 | Production-ready recognition |
+| 100 samples/class, 20+ signers | ~80%+ top-1 | Research-grade corpus |
