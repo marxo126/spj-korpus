@@ -21,6 +21,9 @@ facts and rules most likely to cause mistakes if forgotten.
 | 10 | Always go through `load_pose_arrays()` for pose data — never assume confidence shape |
 | 11 | Label column: always derive from `reviewed_text` / `text` — manifest may lack `label` column |
 | 12 | Metal GPU: max 2 threads for HD (>720p) video, 8 threads for small video |
+| 13 | NEVER commit or push organization names, data source names, partner URLs, or FTP addresses to public git — use generic placeholders (e.g. `category-source`, `reference-dict`, `partner-dict`, `intl-vocab`). Internal names stay in local files only. |
+| 14 | NEVER push CLAUDE.md or MEMORY.md to public git — these contain internal project details not meant for public repos |
+| 15 | When a training experiment finishes, append its results to `EXPERIMENT_REPORT.md` in academic research style — include setup, hyperparameters, results table, and key findings |
 
 ---
 
@@ -390,19 +393,33 @@ Input → Linear+BN → [3× Conv1DBlock(k=17) → TransformerBlock] ×2 → Lin
 | `xy_velocity` | Drop z, then + dx + dx2 | 576 |
 | `norm_xy_velocity` | Nose-normalize + drop z + dx + dx2 | 576 |
 
-Best combo: **`conv1d_transformer` + `norm_xy_velocity`** (from Kaggle 1st place research).
+Best combo: **`conv1d_transformer` + `norm_xy_velocity` + `mirror_rotation_only` augmentation**.
 
 Input dim is auto-detected from NPZ files at training time and from checkpoint weights at load time.
 `preset_from_input_dim()` handles all feature mode multipliers (×2, ×3, ×6, ×9).
 
-### Transfer Learning — Category → Word (Best Approach)
-The category model (`cat_v2_ep55_acc0.4493.pt`, 102 categories, 44.9% val) serves as the encoder initialization for word-level training. Two-phase fine-tuning:
+### Augmentation — Mirror + Rotation Only (Best Approach)
+Greedy hill-climbing search over 8 augmentation flags (tools/augment_search.py) found:
+- **Mirror + rotation only = 38.86% val** (best)
+- All 8 augments = 35.63% (worse than baseline 35.72%)
+- **Spatial augments help, temporal augments hurt** for sign recognition
+
+Best augmentation config:
+```python
+aug_temporal_crop=False, aug_speed=False, aug_noise=False, aug_scale=False,
+aug_mirror=True, aug_rotation=True, aug_joint_dropout=False, aug_temporal_mask=False
+```
+
+### Transfer Learning — Category → Word (Old Transformer Only)
+The category model (`cat_v2_ep55_acc0.4493.pt`, 102 categories, 44.9% val) uses old transformer architecture (input_dim=288). **Cannot transfer to Conv1D models** (input_dim=576) — 0/96 weights match. Conv1D models train from scratch.
+
+For old transformer models, two-phase fine-tuning still works:
 1. **Phase 1** (10 epochs): Freeze encoder, train classifier only (lr=0.001)
 2. **Phase 2** (90 epochs): Unfreeze all, lr=0.0003 + cosine schedule + patience=25
 
-Weight transfer: 27/29 encoder params transfer exactly (layers 0-1 match; layer 2 random init; classifier replaced). Uses `_load_pretrained_weights()` in `trainer.py`.
-
-**Result:** 24.9% test top-1, 31.9% top-3 — best model so far.
+**Old best (transformer):** 24.9% test top-1, 31.9% top-3 (516 classes, category transfer).
+**Current best (transformer + aug search):** 38.86% val (5,352 classes, mirror+rotation).
+**Conv1D experiments:** 36.6% val with all-8 augs (8,005 classes); optimal combo in progress.
 
 ### Self-Supervised Pre-training (SSL) — `src/spj/ssl_pretrain.py`
 Masked Pose Modeling: masks 15% of frames, trains encoder to reconstruct them. No labels needed.
@@ -417,10 +434,17 @@ Masked Pose Modeling: masks 15% of frames, trains encoder to reconstruct them. N
 ### Model Checkpoints (current)
 ```
 data/models/
+  # Active models (Conv1D architecture)
+  augsearch_winner_mirror_rotation_only_ep45_acc0.3886.pt  # ★ BEST: transformer+mirror_rot (5,352 cls, 38.9% val)
+  conv1d_unified_3plus/best_model.pt                        # Conv1D+all8aug (8,005 cls, 36.6% val)
+
+  # Old transformer models (research reference — cannot transfer to Conv1D)
   cat_v2_ep55_acc0.4493.pt          # Category model (102 classes, 44.9% val)
-  quality_ep22_acc0.2297.pt          # Baseline word model (516 classes, 23.0% val)
-  transfer_cat2word_ep37_acc0.2587.pt # ★ BEST: category transfer (516 classes, 24.9% test)
-  ssl_pretrained_compact.pt           # SSL encoder (unsupervised, 50 epochs)
+  dualview_2plus_ep70_acc0.3647.pt  # Dual-view (5,352 classes, 35.0% test)
+  dualview_3plus_ep75_acc0.3497.pt  # Dual-view (4,844 classes, 34.6% test)
+  transfer_cat2word_ep37_acc0.2587.pt # Category transfer (516 classes, 24.9% test)
+  quality_ep22_acc0.2297.pt          # Baseline (516 classes, 23.0% val)
+  ssl_pretrained_compact.pt           # SSL encoder (unsupervised)
   ssl_finetune_ep66_acc0.2394.pt     # SSL fine-tuned (516 classes, 17.8% test)
   quality2_transfer_ep29_acc0.2259.pt # 2+ expanded (1,743 classes, 19.5% test)
 ```
@@ -441,10 +465,24 @@ data/models/
 
 ### Data Directories
 ```
-data/training/splits/      # train.csv, val.csv, test.csv
-data/training/export/       # .npz segments + manifest.csv
-data/models/                # .pt checkpoints
-data/evaluations/           # JSON + CSV evaluation reports
+data/training/splits/              # Original dualview splits (train/val/test.csv)
+data/training/splits_unified_3plus/ # All-source unified, 3+ samples/label (8,005 classes)
+data/training/splits_unified_2plus/ # All-source unified, 2+ samples/label (14,296 classes)
+data/training/export/               # .npz segments from alignment pipeline
+data/training/manifest_*.csv        # Per-source manifests (posunky, dictio, artsign, etc.)
+data/models/                        # .pt checkpoints
+data/evaluations/                   # JSON + CSV evaluation reports
+data/pose/{source}/                 # NPZ files per source (posunky, dictio, artsign, etc.)
+```
+
+### Training Scripts
+```
+tools/train_optimal.py         # ★ Best: Conv1D + mirror_rotation + all sources
+tools/train_sequential.py      # Conv1D + all-8-aug, sequential
+tools/overnight_conv1d.py      # Conv1D + all-8-aug, parallel (slow — GPU contention)
+tools/train_multisource.py     # Generic multi-source training
+tools/method_comparison.py     # 8-method architecture comparison
+tools/augment_search.py        # Greedy augmentation combo search
 ```
 
 ---

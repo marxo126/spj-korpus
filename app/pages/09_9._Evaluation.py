@@ -132,6 +132,7 @@ with tab_eval:
                     model, label_encoder, test_df, EXPORT_DIR,
                     max_seq_len=config.max_seq_len,
                     batch_size=config.batch_size,
+                    feature_mode=config.feature_mode,
                 )
 
             if "error" in metrics:
@@ -215,6 +216,7 @@ with tab_compare:
                 metrics = evaluate_model(
                     model, label_encoder, test_df, EXPORT_DIR,
                     max_seq_len=config.max_seq_len,
+                    feature_mode=config.feature_mode,
                 )
                 evaluations.append((name, metrics))
 

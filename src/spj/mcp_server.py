@@ -554,9 +554,15 @@ def spj_evaluate_model(checkpoint_filename: str) -> dict:
 
         model, label_encoder, config, meta = load_checkpoint(ckpt_path)
 
-        # Load test split
-        test_path = DATA_DIR / "training" / "splits" / "test.csv"
-        if not test_path.exists():
+        # Find best matching test split
+        splits_base = DATA_DIR / "training"
+        test_path = None
+        for splits_name in ["splits_unified_3plus", "splits_unified_2plus", "splits"]:
+            candidate = splits_base / splits_name / "test.csv"
+            if candidate.exists():
+                test_path = candidate
+                break
+        if test_path is None:
             return {"status": "error", "message": "No test.csv — train a model first"}
 
         test_df = pd.read_csv(test_path)
@@ -565,6 +571,7 @@ def spj_evaluate_model(checkpoint_filename: str) -> dict:
         metrics = evaluate_model(
             model, label_encoder, test_df, npz_dir,
             max_seq_len=config.max_seq_len,
+            feature_mode=config.feature_mode,
         )
 
         # Save report

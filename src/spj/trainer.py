@@ -183,6 +183,7 @@ def feature_dim_for_mode(n_landmarks: int, mode: str) -> int:
 _AUG_FLAG_NAMES = [
     "aug_temporal_crop", "aug_speed", "aug_noise", "aug_scale",
     "aug_mirror", "aug_rotation", "aug_joint_dropout", "aug_temporal_mask",
+    "aug_mixup",
 ]
 
 
@@ -256,12 +257,9 @@ class AugmentedPoseDataset(Dataset):
       - Spatial rotation (Y-axis, ±15°)
       - Joint dropout (zero random landmarks)
       - Temporal masking (zero random frame spans)
+      - Mixup (blend with same-label sample, 30% probability)
 
     The first variant (aug_idx=0) is always the unaugmented original.
-
-    Augmentation flags (all True by default):
-      - ``aug_temporal_crop``, ``aug_speed``, ``aug_noise``, ``aug_scale``
-      - ``aug_mirror``, ``aug_rotation``, ``aug_joint_dropout``, ``aug_temporal_mask``
     """
 
     # Hand slices per preset (within the filtered landmark array)
@@ -289,6 +287,7 @@ class AugmentedPoseDataset(Dataset):
         aug_rotation: bool = True,
         aug_joint_dropout: bool = True,
         aug_temporal_mask: bool = True,
+        aug_mixup: bool = False,
         feature_mode: str = "raw",
     ):
         self.npz_dir = Path(npz_dir)
@@ -306,6 +305,7 @@ class AugmentedPoseDataset(Dataset):
         self.aug_rotation = aug_rotation
         self.aug_joint_dropout = aug_joint_dropout
         self.aug_temporal_mask = aug_temporal_mask
+        self.aug_mixup = aug_mixup
 
         # Preload all NPZ into RAM (128GB available — no reason to lazy-load)
         self.data: list[tuple[np.ndarray, int]] = []
@@ -340,6 +340,14 @@ class AugmentedPoseDataset(Dataset):
             else:
                 logger.warning("Unknown landmark count %d — hand mirroring disabled", n_lm)
                 self.aug_mirror = False
+
+        # Build label→indices mapping for mixup
+        self._label_to_indices: dict[int, list[int]] = {}
+        if self.aug_mixup:
+            from collections import defaultdict
+            self._label_to_indices = defaultdict(list)
+            for i, (_, label_idx) in enumerate(self.data):
+                self._label_to_indices[label_idx].append(i)
 
     def __len__(self) -> int:
         return len(self.data) * self.n_augments
@@ -426,6 +434,19 @@ class AugmentedPoseDataset(Dataset):
                 span_len = rng.randint(2, min(6, max(3, cur_T // 5)))
                 start = rng.randint(0, max(1, cur_T - span_len))
                 pose[start:start + span_len, :, :] = 0.0
+
+        # 9. Mixup — blend with another sample of the same label
+        if self.aug_mixup and rng.random() < 0.3:
+            _, label_idx = self.data[sample_idx]
+            candidates = self._label_to_indices.get(label_idx, [])
+            others = [c for c in candidates if c != sample_idx]
+            if others:
+                other_idx = rng.choice(others)
+                other_pose = self.data[other_idx][0]
+                min_T = min(pose.shape[0], other_pose.shape[0])
+                lam = rng.beta(0.3, 0.3)
+                lam = max(0.5, lam)  # keep original dominant
+                pose[:min_T] = lam * pose[:min_T] + (1 - lam) * other_pose[:min_T]
 
         return pose
 
@@ -805,6 +826,7 @@ class TrainingConfig:
     aug_rotation: bool = True
     aug_joint_dropout: bool = True
     aug_temporal_mask: bool = True
+    aug_mixup: bool = False           # blend with another same-label sample
 
 
 @dataclass

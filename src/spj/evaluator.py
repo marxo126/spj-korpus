@@ -26,6 +26,7 @@ def evaluate_model(
     max_seq_len: int = 300,
     batch_size: int = 256,
     device: Optional[torch.device] = None,
+    feature_mode: str = "raw",
 ) -> dict:
     """Run model on test split and return detailed metrics.
 
@@ -43,7 +44,7 @@ def evaluate_model(
     if device is None:
         device = next(model.parameters()).device
 
-    ds = PoseSegmentDataset(test_df, npz_dir, label_encoder, max_seq_len)
+    ds = PoseSegmentDataset(test_df, npz_dir, label_encoder, max_seq_len, feature_mode=feature_mode)
     if len(ds) == 0:
         return {"error": "No test samples found", "accuracy": 0.0, "n_samples": 0}
 
