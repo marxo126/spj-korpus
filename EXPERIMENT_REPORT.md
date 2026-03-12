@@ -427,3 +427,85 @@ This represents a **1.66× improvement** over the old Transformer category model
 4. **Two-phase fine-tuning validated for Conv1D:** The freeze→unfreeze pattern works for Conv1D+Transformer just as it did for pure Transformer. The +4.1% jump at unfreeze (epoch 11: 27.7% → 31.8%) confirms that the frozen phase successfully adapts the classifier before fine-tuning encoder representations.
 
 5. **Conv1D category model as foundation:** The `conv1d_category_ep59_acc0.7460.pt` checkpoint (74.6%, 116 categories) is a strong foundation model for future transfer experiments with different word-level datasets or label configurations.
+
+---
+
+## 12. Extended Landmark Preset — Mixed-Preset Training (2026-03-12)
+
+### Motivation
+
+The compact landmark preset (96 landmarks) captures body, hands, and lip/nose face landmarks. The extended preset (148 landmarks) adds 52 eye and eyebrow landmarks that carry grammatical meaning in sign language — questions (raised eyebrows), negation (furrowed brows), gaze direction (agreement verbs). This experiment tests whether these additional face landmarks improve sign recognition accuracy.
+
+### Challenge: Incomplete Extended Data
+
+Only sources with original `.pose` files can be re-exported at the extended preset:
+- **Kodifikacia + SpreadTheSign:** 15,130 segments — re-exported at 148 landmarks
+- **Posunky + Dictio:** 22,100 segments — only compact NPZ available (no videos to re-extract)
+
+This creates a mixed-preset training scenario where ~44% of samples have real extended data and ~56% have compact data zero-padded to 148 landmarks.
+
+### Approach: Compact-to-Extended Zero-Padding
+
+Compact (96) landmarks are a strict subset of extended (148). A position mapping (`_COMPACT_TO_EXTENDED_MAP`) maps each of the 96 compact positions to its corresponding position in the 148-landmark array. The remaining 52 positions (eyes + eyebrows) are filled with zeros for compact samples.
+
+Padding is applied at dataset load time in `AugmentedPoseDataset` and `PoseSegmentDataset` via the `target_n_landmarks=148` parameter.
+
+### Setup
+
+| Parameter | Value |
+|-----------|-------|
+| Architecture | Conv1D+Transformer |
+| Feature mode | `norm_xy_velocity` |
+| Input dim | 888 (148 × 6) |
+| Parameters | 4,951,685 |
+| Classes | 8,005 |
+| Training samples | 23,293 (10,267 extended / 13,026 compact-padded) |
+| Validation samples | 5,006 (2,465 extended / 2,541 compact-padded) |
+| Augmentation | mirror + rotation only, 10× |
+| Batch size | 512 |
+| Learning rate | 0.0005 |
+| Epochs | 12/30 (stopped early — negative result) |
+
+### Results
+
+| Epoch | Train Loss | Train Acc | Val Loss | Val Acc |
+|-------|-----------|-----------|----------|---------|
+| 1 | 7.956 | 0.77% | 8.203 | 0.66% |
+| 2 | 6.191 | 8.60% | 8.632 | 2.08% |
+| 3 | 4.916 | 29.3% | 9.714 | 4.27% |
+| 5 | 3.837 | 63.0% | 11.945 | 5.33% |
+| 7 | 3.625 | 76.1% | 12.989 | 5.99% |
+| 9 | 3.523 | 80.9% | 13.124 | 7.07% |
+| 11 | 3.440 | 83.0% | 13.038 | 7.11% |
+| 12 | 3.407 | 83.6% | 12.995 | **7.07%** |
+
+**Best val accuracy: 7.11%** (epoch 11) — stopped early due to clear plateau.
+
+### Comparison to Compact Baseline
+
+| Metric | Extended (148, mixed) | Compact (96, all real) |
+|--------|----------------------|----------------------|
+| Best val acc | **7.11%** | **36.6%** |
+| Val acc at epoch 12 | 7.07% | ~32% |
+| Train acc at epoch 12 | 83.6% | ~75% |
+| Overfitting gap | **76.5 pp** | ~43 pp |
+
+The extended mixed-preset model achieves only **19.4% of the compact baseline's accuracy** (7.1% vs 36.6%).
+
+### Analysis
+
+1. **Zero-padding creates catastrophic noise.** With 56% of training samples having zeros for 52 out of 148 landmarks, the model cannot learn meaningful features from eye/eyebrow positions. The inconsistency between real and zero-filled data dominates over any signal those landmarks might carry.
+
+2. **Massive overfitting.** The 76.5 percentage-point gap between train (83.6%) and val (7.1%) accuracy indicates the model memorizes training examples rather than learning generalizable sign features. The larger input dimensionality (888 vs 576) provides more capacity for memorization without improving generalization.
+
+3. **Val loss divergence.** Validation loss increased monotonically from 8.2 (epoch 1) to 13.0 (epoch 12) while training loss decreased normally. This is a classic sign of the model fitting noise in the training data.
+
+### Key Findings
+
+1. **Mixed-preset training with zero-padding does not work.** The inconsistency between real and padded landmarks is too disruptive. Extended landmarks should only be used when **all** training samples have real data for all positions.
+
+2. **Compact preset (96 landmarks) remains optimal** for the current data regime where >50% of samples come from NPZ-only sources (posunky, dictio).
+
+3. **Extended preset would require re-downloading and re-extracting** posunky and dictio videos to get real 148-landmark data for all samples. This is a significant infrastructure effort (~46K videos) that is not justified by the uncertain benefit of eye/eyebrow landmarks.
+
+4. **Alternative approach for non-manual features:** Rather than adding more landmarks to the same model, a separate non-manual classifier (trained only on extended-preset samples with real data) could be combined with the compact-preset sign classifier in an ensemble. This avoids the mixed-data problem entirely.

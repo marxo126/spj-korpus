@@ -29,6 +29,40 @@ from torch.utils.data import Dataset, DataLoader
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
+# Mixed-preset support: compact (96) → extended (148) padding
+# ---------------------------------------------------------------------------
+
+# Precomputed mapping: compact landmark position → extended landmark position.
+# Compact (96) is a subset of extended (148); this maps each compact index to its
+# position in the extended array. Used for padding compact NPZ to extended format.
+_COMPACT_TO_EXTENDED_MAP: list[int] | None = None  # lazy-computed
+
+
+def _get_compact_to_extended_map() -> list[int]:
+    global _COMPACT_TO_EXTENDED_MAP
+    if _COMPACT_TO_EXTENDED_MAP is None:
+        from spj.training_data import SL_LANDMARK_INDICES_COMPACT, SL_LANDMARK_INDICES_EXTENDED
+        _COMPACT_TO_EXTENDED_MAP = [
+            SL_LANDMARK_INDICES_EXTENDED.index(idx)
+            for idx in SL_LANDMARK_INDICES_COMPACT
+        ]
+    return _COMPACT_TO_EXTENDED_MAP
+
+
+def _pad_compact_to_extended(pose: np.ndarray) -> np.ndarray:
+    """Pad (T, 96, 3) compact pose to (T, 148, 3) extended format.
+
+    Unmapped landmark positions are filled with zeros.
+    """
+    mapping = _get_compact_to_extended_map()
+    T = pose.shape[0]
+    extended = np.zeros((T, 148, 3), dtype=pose.dtype)
+    for compact_idx, ext_idx in enumerate(mapping):
+        extended[:, ext_idx, :] = pose[:, compact_idx, :]
+    return extended
+
+
+# ---------------------------------------------------------------------------
 # Label encoder
 # ---------------------------------------------------------------------------
 
@@ -201,11 +235,13 @@ class PoseSegmentDataset(Dataset):
         label_encoder: LabelEncoder,
         max_seq_len: int = 300,
         feature_mode: str = "raw",
+        target_n_landmarks: int = 0,
     ):
         self.npz_dir = Path(npz_dir)
         self.max_seq_len = max_seq_len
         self.label_encoder = label_encoder
         self.feature_mode = feature_mode
+        self.target_n_landmarks = target_n_landmarks
         self.items: list[tuple[str, int, str]] = []  # (seg_id, label_idx, npz_path)
 
         for _, row in manifest_df.iterrows():
@@ -226,6 +262,8 @@ class PoseSegmentDataset(Dataset):
         d = np.load(npz_path)
 
         pose = d["pose"].astype(np.float32)  # (T, N, 3)
+        if self.target_n_landmarks > 0 and pose.shape[1] < self.target_n_landmarks:
+            pose = _pad_compact_to_extended(pose)
         features = apply_feature_mode(pose, self.feature_mode)  # (T, F)
         features, mask = _pad_or_truncate(features, self.max_seq_len)
 
@@ -289,6 +327,7 @@ class AugmentedPoseDataset(Dataset):
         aug_temporal_mask: bool = True,
         aug_mixup: bool = False,
         feature_mode: str = "raw",
+        target_n_landmarks: int = 0,
     ):
         self.npz_dir = Path(npz_dir)
         self.max_seq_len = max_seq_len
@@ -296,6 +335,7 @@ class AugmentedPoseDataset(Dataset):
         self.augment = augment
         self.n_augments = n_augments if augment else 1
         self.feature_mode = feature_mode
+        self.target_n_landmarks = target_n_landmarks
         # Per-augmentation flags
         self.aug_temporal_crop = aug_temporal_crop
         self.aug_speed = aug_speed
@@ -324,6 +364,8 @@ class AugmentedPoseDataset(Dataset):
 
             d = np.load(npz_path)
             pose = d["pose"].astype(np.float32)  # (T, N, 3)
+            if self.target_n_landmarks > 0 and pose.shape[1] < self.target_n_landmarks:
+                pose = _pad_compact_to_extended(pose)
             label_idx = label_encoder.encode(label_str)
             self.data.append((pose, label_idx))
 
@@ -902,6 +944,7 @@ def train_model(
     output_dir: Path,
     pretrained_path: Optional[Path] = None,
     resume_path: Optional[Path] = None,
+    target_n_landmarks: int = 0,
 ) -> None:
     """Train PoseTransformerEncoder. Designed to run in a background thread.
 
@@ -930,16 +973,20 @@ def train_model(
             train_ds = AugmentedPoseDataset(
                 train_df, npz_dir, label_encoder, config.max_seq_len,
                 augment=True, n_augments=config.n_augments,
-                feature_mode=feature_mode, **aug_flags,
+                feature_mode=feature_mode,
+                target_n_landmarks=target_n_landmarks,
+                **aug_flags,
             )
         else:
             train_ds = PoseSegmentDataset(
                 train_df, npz_dir, label_encoder, config.max_seq_len,
                 feature_mode=feature_mode,
+                target_n_landmarks=target_n_landmarks,
             )
         val_ds = PoseSegmentDataset(
             val_df, npz_dir, label_encoder, config.max_seq_len,
             feature_mode=feature_mode,
+            target_n_landmarks=target_n_landmarks,
         )
 
         if len(train_ds) == 0:

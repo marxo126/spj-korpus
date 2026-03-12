@@ -213,14 +213,17 @@ def _apply_landmark_filter(
     pose_slice: np.ndarray,
     conf_slice: np.ndarray,
     filter_landmarks: bool,
+    landmark_preset: str = "compact",
 ) -> tuple[np.ndarray, np.ndarray, int, list[int]]:
     """Apply SL landmark filtering to pose/confidence slices.
 
     Returns (filtered_pose, filtered_conf, n_landmarks, indices).
+    When *filter_landmarks* is True, uses the given *landmark_preset*
+    ("compact", "extended", or "full") from SL_LANDMARK_PRESETS.
     """
     if filter_landmarks:
-        idx = SL_LANDMARK_INDICES
-        return pose_slice[:, idx, :], conf_slice[:, idx, :], SL_N_LANDMARKS, idx
+        idx = SL_LANDMARK_PRESETS[landmark_preset]
+        return pose_slice[:, idx, :], conf_slice[:, idx, :], len(idx), idx
     idx = list(range(543))
     return pose_slice, conf_slice, 543, idx
 
@@ -784,6 +787,7 @@ def export_segment_npz(
     row: "pd.Series",
     output_dir: Path,
     filter_landmarks: bool = True,
+    landmark_preset: str = "compact",
 ) -> Optional[str]:
     """Export one approved segment as a float16 .npz training file.
 
@@ -827,7 +831,7 @@ def export_segment_npz(
     conf_slice = conf[frame_start:frame_end, 0, :, :]   # (T, 543, 1)
 
     pose_slice, conf_slice, n_landmarks, idx = _apply_landmark_filter(
-        pose_slice, conf_slice, filter_landmarks,
+        pose_slice, conf_slice, filter_landmarks, landmark_preset,
     )
 
     text = str(row["reviewed_text"]).strip() or str(row["text"])
@@ -1093,6 +1097,7 @@ def export_sign_npz(
     conf_data: np.ndarray,
     output_dir: Path,
     filter_landmarks: bool = True,
+    landmark_preset: str = "compact",
 ) -> Optional[str]:
     """Export one paired sign as a float16 .npz training file.
 
@@ -1126,7 +1131,7 @@ def export_sign_npz(
     conf_slice = conf_data[frame_start:frame_end, 0, :, :]
 
     pose_slice, conf_slice, n_landmarks, idx = _apply_landmark_filter(
-        pose_slice, conf_slice, filter_landmarks,
+        pose_slice, conf_slice, filter_landmarks, landmark_preset,
     )
 
     gloss_id = str(pairing_row["gloss_id"])
