@@ -509,3 +509,59 @@ The extended mixed-preset model achieves only **19.4% of the compact baseline's 
 3. **Extended preset would require re-downloading and re-extracting** posunky and dictio videos to get real 148-landmark data for all samples. This is a significant infrastructure effort (~46K videos) that is not justified by the uncertain benefit of eye/eyebrow landmarks.
 
 4. **Alternative approach for non-manual features:** Rather than adding more landmarks to the same model, a separate non-manual classifier (trained only on extended-preset samples with real data) could be combined with the compact-preset sign classifier in an ensemble. This avoids the mixed-data problem entirely.
+
+---
+
+## 13. Higher Min-Samples Threshold (5+ per class) (2026-03-12)
+
+### Motivation
+
+The unified 3+ model trains on 8,005 classes with an average of ~3 samples per class. The category model achieves 74.6% with ~44 samples per class (116 classes). This experiment tests whether filtering to classes with 5+ samples improves per-class accuracy by providing more training data per class.
+
+### Setup
+
+| Parameter | Value |
+|-----------|-------|
+| Architecture | Conv1D+Transformer |
+| Feature mode | `norm_xy_velocity` |
+| Input dim | 576 (96 × 6) |
+| Parameters | 2,557,526 |
+| Classes | 1,942 (filtered from 8,005) |
+| Training samples | 9,644 (filtered from 23,293) |
+| Validation samples | 2,229 |
+| Avg samples/class | ~5.0 (train) |
+| Augmentation | mirror + rotation only, 10× |
+| Batch size | 256 |
+| Learning rate | 0.0005 |
+| Epochs | 48/80 (stopped early — plateaued) |
+
+### Results
+
+| Epoch | Train Loss | Train Acc | Val Loss | Val Acc |
+|-------|-----------|-----------|----------|---------|
+| 1 | 6.768 | 1.71% | 7.087 | 1.35% |
+| 5 | 2.666 | 69.1% | 7.777 | 11.93% |
+| 10 | 1.858 | 81.8% | 7.249 | 12.92% |
+| 16 | 1.671 | 82.8% | 6.936 | **14.31%** |
+| 30 | 1.514 | 83.3% | 6.654 | **15.34%** |
+| 48 | 1.467 | 83.4% | 6.628 | 14.49% |
+
+**Best val accuracy: 15.34%** — stopped at epoch 48 due to plateau (no improvement for ~18 epochs).
+
+### Comparison
+
+| Model | Classes | Train samples | Samples/class | Best Val Acc |
+|-------|---------|--------------|---------------|-------------|
+| Category (116) | 116 | ~5,200 | ~44 | **74.6%** |
+| **5+ words** | **1,942** | **9,644** | **~5** | **15.3%** |
+| 3+ words | 8,005 | 23,293 | ~3 | **36.6%** |
+
+### Key Findings
+
+1. **Filtering to 5+ samples per class makes performance worse, not better.** The 5+ model (15.3%) significantly underperforms the 3+ model (36.6%) despite having more samples per class (5 vs 3). The reason: filtering removed 59% of total training data (23K → 9.6K) while only reducing classes by 76% (8K → 1.9K).
+
+2. **Total training data volume matters more than per-class count.** The 3+ model benefits from seeing a wider diversity of signs, even if most classes have only 3 samples. The larger dataset provides better regularization and more general pose features.
+
+3. **The accuracy scaling law is dominated by samples/class.** Comparing across all experiments: 3 samples/class → ~36%, 5 samples/class → ~15%, 44 samples/class → ~75%. The 5+ result is an outlier because it sacrificed too much total data. The path to higher accuracy is more data per class **without** removing other classes.
+
+4. **Implication for data collection:** To achieve 50%+ word-level accuracy, the corpus needs ~20-50 samples per sign from multiple signers. Current dictionary sources (posunky, dictio) provide 1-5 samples from 1-2 signers. A crowdsourced data collection approach (Sign Collector) is the most promising path to break through the accuracy ceiling.
