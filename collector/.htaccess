@@ -1,0 +1,45 @@
+# SPJ Collector — WebSupport.sk config
+
+# PHP limits for video upload
+php_value upload_max_filesize 10M
+php_value post_max_size 12M
+php_value max_execution_time 60
+php_value memory_limit 64M
+
+# Force HTTPS (required for camera access) — skip for localhost/Docker
+RewriteEngine On
+
+# Skip rewrite for existing files and directories
+RewriteCond %{REQUEST_FILENAME} -f [OR]
+RewriteCond %{REQUEST_FILENAME} -d
+RewriteRule ^ - [L]
+
+# Force HTTPS (required for camera access) — skip for localhost/Docker
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP_HOST} !^localhost [NC]
+RewriteCond %{HTTP_HOST} !^127\.0\.0\.1 [NC]
+RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Deny direct access to includes directory
+RewriteRule ^includes/ - [F,L]
+
+# Deny access to uploads directory listing
+Options -Indexes
+
+# Security headers
+<IfModule mod_headers.c>
+    Header set X-Content-Type-Options "nosniff"
+    Header set X-Frame-Options "DENY"
+    Header set Referrer-Policy "strict-origin-when-cross-origin"
+    Header set Permissions-Policy "camera=(self), microphone=()"
+    Header set Strict-Transport-Security "max-age=31536000; includeSubDomains"
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://oauth2.googleapis.com https://www.googleapis.com; media-src 'self' blob:; worker-src blob:"
+</IfModule>
+
+# Cache static assets
+<IfModule mod_expires.c>
+    ExpiresActive On
+    ExpiresByType text/css "access plus 1 hour"
+    ExpiresByType application/javascript "access plus 1 hour"
+    ExpiresByType image/png "access plus 1 month"
+</IfModule>

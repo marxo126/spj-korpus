@@ -9,10 +9,31 @@ let recordedChunks = [];
 let recordedBlob = null;
 let currentSign = null;
 let todayCount = parseInt(document.getElementById('progress-count')?.textContent) || 0;
+let totalCount = parseInt(document.getElementById('total-count')?.textContent) || 0;
 let qualityChecker = null;
 let isRecording = false;
-let recordingStartTime = 0;
-let recordedDurationMs = 3000;
+let autoRecordEnabled = false;
+let autoRecordActive = false;   // true while auto-countdown is running
+let autoReadyFrames = 0;        // consecutive frames with hands+face detected
+let recordTimerInterval = null;  // elapsed timer
+let recordAutoStop = null;       // 5s auto-stop timeout
+let reviewingRecording = false;  // true while preview/submit/variant screen is showing
+let recordingStartTime = 0;      // timestamp when recording started
+let recordedDurationMs = 0;      // duration of last recording in ms
+const AUTO_READY_THRESHOLD = 5;  // need 5 consecutive good frames (~1 sec) before auto-start
+
+function toggleAutoRecord(enabled) {
+    autoRecordEnabled = enabled;
+    localStorage.setItem('spj_auto_record', enabled ? '1' : '0');
+    if (!enabled) cancelAutoRecord();
+}
+
+function cancelAutoRecord() {
+    autoRecordActive = false;
+    autoReadyFrames = 0;
+    const label = document.getElementById('record-label');
+    if (label) label.dataset.autoCountdown = '';
+}
 
 function getCsrfToken() {
     return document.querySelector('meta[name="csrf-token"]')?.content || '';
@@ -20,7 +41,6 @@ function getCsrfToken() {
 
 // ── Init on page load ──
 document.addEventListener('DOMContentLoaded', async () => {
-    // Camera permission priming — explain why we need camera
     const perm = await navigator.permissions?.query({ name: 'camera' }).catch(() => null);
     if (perm && perm.state === 'prompt') {
         const loading = document.getElementById('camera-loading');
@@ -42,42 +62,43 @@ document.addEventListener('DOMContentLoaded', async () => {
         updateQualityStatus
     );
     qualityChecker.start();
+    restoreAutoRecord();
+
+    // Cleanup camera and quality checker on page unload
+    window.addEventListener('beforeunload', () => {
+        if (cameraStream) {
+            cameraStream.getTracks().forEach(t => t.stop());
+        }
+        if (qualityChecker) {
+            qualityChecker.stop();
+        }
+        // Revoke any pending blob URL to prevent memory leaks
+        const previewEl = document.getElementById('video-preview');
+        if (previewEl && previewEl.src && previewEl.src.startsWith('blob:')) {
+            URL.revokeObjectURL(previewEl.src);
+        }
+    });
 });
+
+function restoreAutoRecord() {
+    const savedAuto = localStorage.getItem('spj_auto_record');
+    if (savedAuto === '1') {
+        autoRecordEnabled = true;
+        const toggle = document.getElementById('auto-record-toggle');
+        if (toggle) toggle.checked = true;
+    }
+}
 
 // ── Camera: always 720p, always front, no user choice ──
 async function initCamera() {
     try {
+        // Let camera give native resolution — CSS handles framing
         const stream = await navigator.mediaDevices.getUserMedia({
-            video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+            video: { facingMode: 'user' },
             audio: false
         });
 
-        // If device gave higher than 720p, downscale via canvas
-        const track = stream.getVideoTracks()[0];
-        const settings = track.getSettings();
-
-        if (settings.height > 720) {
-            const tempVideo = document.createElement('video');
-            tempVideo.srcObject = stream;
-            tempVideo.muted = true;
-            tempVideo.playsInline = true;
-            await tempVideo.play();
-
-            const canvas = document.createElement('canvas');
-            canvas.width = 1280;
-            canvas.height = 720;
-            const ctx = canvas.getContext('2d');
-
-            function draw() {
-                ctx.drawImage(tempVideo, 0, 0, 1280, 720);
-                if (cameraStream) requestAnimationFrame(draw);
-            }
-            draw();
-
-            cameraStream = canvas.captureStream(30);
-        } else {
-            cameraStream = stream;
-        }
+        cameraStream = stream;
 
         const preview = document.getElementById('camera-preview');
         preview.srcObject = cameraStream;
@@ -86,10 +107,20 @@ async function initCamera() {
         document.getElementById('camera-loading').style.display = 'none';
         document.getElementById('camera-container').style.display = 'block';
 
+        // Show framing guide
+        if (!FramingGuide.hasSeenCard()) {
+            FramingGuide.showInstructionCard(() => {
+                FramingGuide.showOverlay(document.getElementById('camera-container'));
+            });
+        } else {
+            FramingGuide.showOverlay(document.getElementById('camera-container'));
+        }
+
         // Start quality checker if not yet running
         if (!qualityChecker) {
             qualityChecker = new QualityChecker(preview, updateQualityStatus);
             qualityChecker.start();
+            restoreAutoRecord();
         }
 
     } catch (err) {
@@ -102,7 +133,6 @@ async function initCamera() {
 // ── Load next sign to record ──
 async function loadNextSign() {
     try {
-        // Build query params for theme/sign filtering
         const params = new URLSearchParams();
         const themeEl = document.getElementById('current-theme-id');
         const themeSetEl = document.getElementById('theme-id-set');
@@ -113,7 +143,7 @@ async function loadNextSign() {
         }
         if (signEl && signEl.value !== '0') {
             params.set('sign_id', signEl.value);
-            signEl.value = '0'; // clear after first use
+            signEl.value = '0';
         }
 
         const qs = params.toString();
@@ -124,22 +154,15 @@ async function loadNextSign() {
             const isThemeDone = sign.error === 'all_done' && themeEl && themeSetEl && themeSetEl.value === '1';
             document.getElementById('word-display').textContent = '🎉 Hotovo!';
             document.getElementById('help-links').innerHTML = isThemeDone
-                ? 'Všetky znaky v tejto téme sú nahrané. <a href="/themes.php">Späť na témy</a>'
-                : 'Všetky znaky sú nahrané.';
+                ? 'Všetky posunky v tejto téme sú nahrané. <a href="/themes.php">Späť na témy</a>'
+                : 'Všetky posunky sú nahrané.';
             document.getElementById('record-btn').classList.add('disabled');
             return;
         }
 
         currentSign = sign;
         document.getElementById('word-display').textContent = sign.word_sk.toUpperCase();
-
-        // Build help links
-        let links = 'Nepoznáte znak? → ';
-        if (sign.link_posunky) links += `<a href="${sign.link_posunky}" target="_blank" rel="noopener">Posunky.sk</a>`;
-        if (sign.link_posunky && sign.link_dictio) links += ' · ';
-        if (sign.link_dictio) links += `<a href="${sign.link_dictio}" target="_blank" rel="noopener">Dictio.info</a>`;
-        if (!sign.link_posunky && !sign.link_dictio) links = '';
-        document.getElementById('help-links').innerHTML = links;
+        document.getElementById('help-links').innerHTML = 'Nepoznáte posunok? → ' + buildRefLinks(sign);
 
     } catch (err) {
         console.error('Failed to load next sign:', err);
@@ -148,7 +171,8 @@ async function loadNextSign() {
 
 // ── Quality status callback ──
 function updateQualityStatus(status) {
-    if (isRecording) return; // don't update UI during recording
+    // During recording: don't update UI, just wait for manual stop or 5s timer
+    if (isRecording) return;
 
     const container = document.getElementById('camera-container');
     const banner = document.getElementById('camera-banner');
@@ -211,16 +235,33 @@ function updateQualityStatus(status) {
     }
 
     // Label
-    document.getElementById('record-label').textContent =
-        blocked ? 'Ukážte ruky a tvár' : 'Stlačte pre nahrávanie';
+    const label = document.getElementById('record-label');
+    if (!label.dataset.autoCountdown) {
+        label.textContent = blocked ? 'Ukážte ruky a tvár' : (autoRecordEnabled ? 'Ukážte ruky pre auto nahrávanie' : 'Stlačte pre nahrávanie');
+    }
+
+    // Auto-record: require stable detection before starting
+    if (autoRecordEnabled && !isRecording && !reviewingRecording && currentSign) {
+        const ready = status.hands && status.face;
+
+        if (ready) {
+            autoReadyFrames++;
+        } else {
+            autoReadyFrames = 0;
+            // Only cancel countdown if detection lost for multiple frames (not single flicker)
+        }
+
+        // Start countdown after stable detection
+        if (!autoRecordActive && autoReadyFrames >= AUTO_READY_THRESHOLD) {
+            autoRecordActive = true;
+            label.dataset.autoCountdown = '1';
+            autoStartRecording();
+        }
+    }
 }
 
-// ── Countdown → Record ──
-async function startRecording() {
-    if (!currentSign || isRecording) return;
-    if (document.getElementById('record-btn').classList.contains('disabled')) return;
-
-    // 3-2-1 countdown
+// ── Auto-start: fast 3-2-1 (~1 second total) then record ──
+async function autoStartRecording() {
     const overlay = document.getElementById('countdown-overlay');
     const numEl = document.getElementById('countdown-num');
     overlay.style.display = 'flex';
@@ -228,13 +269,47 @@ async function startRecording() {
     for (let i = 3; i >= 1; i--) {
         numEl.textContent = i;
         numEl.style.animation = 'none';
-        void numEl.offsetHeight; // force reflow
+        void numEl.offsetHeight;
+        numEl.style.animation = 'countdown-pulse 0.3s ease-in-out';
+        await sleep(333);
+    }
+
+    overlay.style.display = 'none';
+    cancelAutoRecord();
+
+    // Only start if still valid
+    if (!isRecording && !reviewingRecording && autoRecordEnabled && currentSign) {
+        beginRecording();
+    }
+}
+
+// ── Manual start: 3-2-1 countdown (1 sec each) then record ──
+async function startRecording() {
+    if (!currentSign || isRecording) return;
+    if (document.getElementById('record-btn').classList.contains('disabled')) return;
+
+    FramingGuide.hideOverlay();
+
+    const overlay = document.getElementById('countdown-overlay');
+    const numEl = document.getElementById('countdown-num');
+    overlay.style.display = 'flex';
+
+    for (let i = 3; i >= 1; i--) {
+        numEl.textContent = i;
+        numEl.style.animation = 'none';
+        void numEl.offsetHeight;
         numEl.style.animation = 'countdown-pulse 0.5s ease-in-out';
         await sleep(1000);
     }
-    overlay.style.display = 'none';
 
-    // Start recording
+    overlay.style.display = 'none';
+    beginRecording();
+}
+
+// ── Actually start MediaRecorder ──
+function beginRecording() {
+    if (isRecording) return;
+
     isRecording = true;
     recordedChunks = [];
 
@@ -261,59 +336,135 @@ async function startRecording() {
     document.getElementById('record-btn').className = 'record-btn recording';
     document.getElementById('record-btn').onclick = stopRecording;
 
-    // Timer
+    // Elapsed timer
     let elapsed = 0;
     const timerEl = document.getElementById('recording-timer');
-    const timerInterval = setInterval(() => {
+    recordTimerInterval = setInterval(() => {
         elapsed++;
-        timerEl.textContent = `0:${String(elapsed).padStart(2, '0')} / 0:03`;
+        timerEl.textContent = `0:${String(elapsed).padStart(2, '0')} / 0:05`;
     }, 1000);
 
-    // Auto-stop after 3 seconds
-    setTimeout(() => {
-        clearInterval(timerInterval);
+    // Auto-stop after 5 seconds
+    recordAutoStop = setTimeout(() => {
         stopRecording();
-    }, 3000);
+    }, 5000);
 }
 
 function stopRecording() {
+    // Clear timers first
+    if (recordTimerInterval) { clearInterval(recordTimerInterval); recordTimerInterval = null; }
+    if (recordAutoStop) { clearTimeout(recordAutoStop); recordAutoStop = null; }
+
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
     }
 }
 
-function onRecordingDone() {
+async function onRecordingDone() {
     isRecording = false;
+    reviewingRecording = true;
     recordedDurationMs = Date.now() - recordingStartTime;
     recordedBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
 
-    // Show preview
+    // Hide camera, show preview
     document.getElementById('camera-container').style.display = 'none';
     document.getElementById('status-badges').style.display = 'none';
     document.getElementById('record-controls').style.display = 'none';
+    document.getElementById('recording-indicator').style.display = 'none';
+    document.getElementById('camera-banner').style.display = 'block';
 
     const previewEl = document.getElementById('video-preview');
     previewEl.src = URL.createObjectURL(recordedBlob);
     previewEl.style.display = 'block';
-    document.getElementById('preview-controls').style.display = 'block';
 
-    // Reset recording UI
-    document.getElementById('recording-indicator').style.display = 'none';
-    document.getElementById('camera-banner').style.display = 'block';
+    // Quality gate
+    const gateContainer = document.getElementById('quality-gate-container');
+    gateContainer.innerHTML = '<div class="quality-gate-spinner">Kontrolujem kvalitu...</div>';
+    gateContainer.style.display = 'block';
+    document.getElementById('preview-controls').style.display = 'none';
+
+    await QualityGate.loadModels();
+    const result = await QualityGate.analyze(recordedBlob);
+
+    if (result.skipped || result.passed) {
+        if (result.skipped) {
+            gateContainer.style.display = 'none';
+        } else {
+            gateContainer.innerHTML = renderScoreCard(result, true);
+        }
+        document.getElementById('preview-controls').style.display = 'block';
+    } else {
+        const reasons = [];
+        if (!result.face.passed) reasons.push('Tvár musí byť viditeľná v aspoň 4 z 5 snímok.');
+        if (!result.hands.passed) reasons.push('Ruky musia byť viditeľné v aspoň 3 z 5 snímok.');
+        if (!result.brightness.passed) reasons.push('Osvetlenie musí byť dobré v aspoň 4 z 5 snímok.');
+
+        gateContainer.innerHTML = renderScoreCard(result, false) +
+            `<p style="font-size:13px;color:var(--gray);margin:12px 16px;">${reasons.join(' ')}</p>
+             <div style="padding:0 16px 16px;"><button class="btn btn-gray" onclick="retryRecording()">Nahrať znova</button></div>`;
+    }
 }
 
-// ── Re-record ──
-function retryRecording() {
-    URL.revokeObjectURL(document.getElementById('video-preview').src);
-    recordedBlob = null;
+function renderScoreCard(result, passed) {
+    const cls = passed ? 'pass' : 'fail';
+    const title = passed ? 'Video vyzerá dobre' : 'Skúste to znova';
+    return `<div class="quality-gate-card ${cls}">
+        <h3>${title}</h3>
+        <div class="quality-gate-scores">
+            <div class="quality-gate-score"><span class="label">Tvár</span><span class="value ${result.face.passed ? 'ok' : 'fail'}">${result.face.score}/5</span></div>
+            <div class="quality-gate-score"><span class="label">Ruky</span><span class="value ${result.hands.passed ? 'ok' : 'fail'}">${result.hands.score}/5</span></div>
+            <div class="quality-gate-score"><span class="label">Svetlo</span><span class="value ${result.brightness.passed ? 'ok' : 'fail'}">${result.brightness.score}/5</span></div>
+        </div>
+    </div>`;
+}
 
+// ── Shared helpers ──
+function resetToCamera() {
+    cancelAutoRecord();
+    reviewingRecording = false;
+    if (recordedBlob) {
+        const previewEl = document.getElementById('video-preview');
+        if (previewEl && previewEl.src && previewEl.src.startsWith('blob:')) {
+            URL.revokeObjectURL(previewEl.src);
+        }
+        recordedBlob = null;
+    }
     document.getElementById('video-preview').style.display = 'none';
     document.getElementById('preview-controls').style.display = 'none';
+    document.getElementById('quality-gate-container').style.display = 'none';
+    const vp = document.getElementById('variant-prompt');
+    if (vp) vp.style.display = 'none';
     document.getElementById('camera-container').style.display = 'block';
     document.getElementById('status-badges').style.display = 'flex';
     document.getElementById('record-controls').style.display = 'block';
     document.getElementById('record-btn').className = 'record-btn';
     document.getElementById('record-btn').onclick = startRecording;
+}
+
+function isValidHttpUrl(url) {
+    try {
+        const u = new URL(url, window.location.origin);
+        return u.protocol === 'https:' || u.protocol === 'http:';
+    } catch { return false; }
+}
+
+function buildRefLinks(sign) {
+    if (!sign) return '';
+    const links = [];
+    const w = encodeURIComponent(sign.word_sk);
+    if (sign.link_posunky && isValidHttpUrl(sign.link_posunky)) {
+        links.push(`<a href="${sign.link_posunky}" target="_blank" rel="noopener">Posunky.sk</a>`);
+    } else {
+        links.push(`<a href="https://posunky.sk/?s=${w}" target="_blank" rel="noopener">Posunky.sk</a>`);
+    }
+    if (sign.link_dictio && isValidHttpUrl(sign.link_dictio)) {
+        links.push(`<a href="${sign.link_dictio}" target="_blank" rel="noopener">Dictio.info</a>`);
+    }
+    return links.join(' · ');
+}
+
+function retryRecording() {
+    resetToCamera();
 }
 
 // ── Submit recording ──
@@ -323,9 +474,6 @@ async function submitRecording() {
     const submitBtn = document.getElementById('submit-btn');
     submitBtn.textContent = '⏳ Odosielam...';
     submitBtn.disabled = true;
-
-    // Save to IndexedDB first (offline safety)
-    const offlineId = await OfflineStore.save(recordedBlob, currentSign.id, recordedDurationMs);
 
     try {
         const formData = new FormData();
@@ -339,15 +487,16 @@ async function submitRecording() {
         const result = await res.json();
 
         if (result.ok) {
-            await OfflineStore.remove(offlineId);
             showToast('✅ Odoslané!', 'success');
             todayCount++;
+            totalCount++;
             updateProgress();
-            goToNextSign();
+            showVariantOption();
         } else {
             showToast('⚠️ ' + (result.error || 'Chyba'), 'error');
         }
     } catch (err) {
+        await OfflineStore.save(recordedBlob, currentSign.id, recordedDurationMs);
         showToast('📶 Uložené offline, odošle sa neskôr', 'offline');
         goToNextSign();
     }
@@ -356,16 +505,56 @@ async function submitRecording() {
     submitBtn.disabled = false;
 }
 
-function goToNextSign() {
-    URL.revokeObjectURL(document.getElementById('video-preview').src);
-    recordedBlob = null;
+function showVariantOption() {
+    if (recordedBlob) {
+        const previewEl = document.getElementById('video-preview');
+        if (previewEl && previewEl.src && previewEl.src.startsWith('blob:')) {
+            URL.revokeObjectURL(previewEl.src);
+        }
+        recordedBlob = null;
+    }
     document.getElementById('video-preview').style.display = 'none';
+    document.getElementById('quality-gate-container').style.display = 'none';
     document.getElementById('preview-controls').style.display = 'none';
-    document.getElementById('camera-container').style.display = 'block';
-    document.getElementById('status-badges').style.display = 'flex';
-    document.getElementById('record-controls').style.display = 'block';
-    document.getElementById('record-btn').className = 'record-btn';
-    document.getElementById('record-btn').onclick = startRecording;
+    document.getElementById('record-controls').style.display = 'none';
+
+    const word = currentSign ? currentSign.word_sk.toUpperCase() : '';
+    const links = buildRefLinks(currentSign);
+    const refLinks = links ? `<p style="font-size:13px;margin-bottom:12px;">Nie ste si istý? Pozrite si: ${links}</p>` : '';
+
+    let variantEl = document.getElementById('variant-prompt');
+    if (!variantEl) {
+        variantEl = document.createElement('div');
+        variantEl.id = 'variant-prompt';
+        variantEl.className = 'card';
+        variantEl.style.cssText = 'text-align:center;margin-top:16px;';
+        document.getElementById('preview-controls').parentNode.appendChild(variantEl);
+    }
+    variantEl.innerHTML = `
+        <p style="font-size:15px;color:var(--gray);margin-bottom:12px;">
+            Poznáte ďalší variant posunku <strong>${word}</strong>?
+        </p>
+        ${refLinks}
+        <button class="btn btn-blue" onclick="recordVariant()" style="margin-bottom:8px;">
+            ↻ Nahrať variant
+        </button>
+        <button class="btn btn-gray" onclick="skipVariant()">
+            Ďalší posunok →
+        </button>
+    `;
+    variantEl.style.display = 'block';
+}
+
+function recordVariant() {
+    resetToCamera();
+}
+
+function skipVariant() {
+    goToNextSign();
+}
+
+function goToNextSign() {
+    resetToCamera();
     loadNextSign();
 }
 
@@ -373,9 +562,10 @@ function updateProgress() {
     const goal = parseInt(document.getElementById('progress-count')?.textContent?.split('/')[1]) || 20;
     document.getElementById('progress-count').textContent = `${todayCount} / ${goal}`;
     document.getElementById('progress-fill').style.width = `${Math.min(100, (todayCount / goal) * 100)}%`;
+    const totalEl = document.getElementById('total-count');
+    if (totalEl) totalEl.textContent = totalCount;
 }
 
-// ── Toast notification ──
 function showToast(text, type) {
     const toast = document.getElementById('toast');
     toast.textContent = text;

@@ -18,7 +18,7 @@ $themes = $pdo->query("
            COALESCE(SUM(s.total_recordings), 0) as total_recordings
     FROM themes t
     LEFT JOIN signs s ON s.theme_id = t.id
-    GROUP BY t.id
+    GROUP BY t.id, t.name, t.emoji, t.sort_order
     ORDER BY t.sort_order ASC
 ")->fetchAll();
 

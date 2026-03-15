@@ -1,0 +1,2 @@
+# Deny direct access to uploaded videos — serve via api/video.php
+Deny from all

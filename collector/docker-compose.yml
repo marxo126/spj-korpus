@@ -1,0 +1,50 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:80"
+    volumes:
+      - .:/var/www/html
+      - uploads:/var/www/html/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - DB_HOST=db
+      - DB_NAME=spj_collector
+      - DB_USER=spj
+      - DB_PASS=${DB_PASS:-spj_dev_pass}
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 512M
+
+  db:
+    image: mysql:8.0
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASS:-root}
+      MYSQL_DATABASE: spj_collector
+      MYSQL_USER: spj
+      MYSQL_PASSWORD: ${DB_PASS:-spj_dev_pass}
+    volumes:
+      - ./sql/001_schema.sql:/docker-entrypoint-initdb.d/001_schema.sql
+      - ./sql/002_seed.sql:/docker-entrypoint-initdb.d/002_seed.sql
+      - ./sql/my.cnf:/etc/mysql/conf.d/charset.cnf
+      - db_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 3s
+      retries: 10
+
+volumes:
+  db_data:
+  uploads:

@@ -22,12 +22,12 @@ $pdo = get_db();
 $stmt = $pdo->prepare("
     SELECT t.id, t.name, t.emoji,
            COUNT(s.id) as word_count,
-           COALESCE(utp.recordings_count, 0) as user_count,
-           utp.completed_at
+           COALESCE(MAX(utp.recordings_count), 0) as user_count,
+           MAX(utp.completed_at) as completed_at
     FROM themes t
     LEFT JOIN signs s ON s.theme_id = t.id
     LEFT JOIN user_theme_progress utp ON utp.theme_id = t.id AND utp.user_id = ?
-    GROUP BY t.id
+    GROUP BY t.id, t.name, t.emoji, t.sort_order
     ORDER BY t.sort_order ASC
 ");
 $stmt->execute([$user_id]);

@@ -43,7 +43,7 @@ if (!$file || $file['error'] !== UPLOAD_ERR_OK) {
 
 if ($sign_id <= 0) {
     http_response_code(400);
-    echo json_encode(['error' => 'Neplatný znak'], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['error' => 'Neplatný posunok'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -145,7 +145,7 @@ try {
             FROM user_theme_progress utp
             JOIN signs s ON s.theme_id = utp.theme_id
             WHERE utp.user_id = ? AND utp.theme_id = ?
-            GROUP BY utp.theme_id
+            GROUP BY utp.theme_id, utp.recordings_count
         ");
         $stmt->execute([$user_id, $tid]);
         $tp = $stmt->fetch();

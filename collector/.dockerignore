@@ -1,0 +1,5 @@
+uploads/pending/*
+uploads/approved/*
+.dockerignore
+docker-compose.yml
+Dockerfile

@@ -30,6 +30,10 @@ models/
 # Streamlit secrets
 .streamlit/secrets.toml
 
+# Collector production secrets
+collector/includes/secrets.php
+collector/.env
+
 # Python
 __pycache__/
 *.py[cod]
@@ -41,3 +45,4 @@ dist/
 # Swift build artifacts
 tools/apple-vision-pose/.build/
 tools/apple-vision-pose/.swiftpm/
+.superpowers/

@@ -68,7 +68,7 @@ $stmt->execute($params);
 $signs = $stmt->fetchAll();
 
 if (empty($signs)) {
-    echo json_encode(['error' => 'all_done', 'message' => 'Všetky znaky sú nahrané!'], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['error' => 'all_done', 'message' => 'Všetky posunky sú nahrané!'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 

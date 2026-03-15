@@ -25,7 +25,7 @@ if ($theme_id > 0) {
     $theme = $stmt->fetch();
 }
 
-$page_title = 'Nahrať znak — ' . SITE_NAME;
+$page_title = 'Nahrať posunok — ' . SITE_NAME;
 require_once __DIR__ . '/includes/header.php';
 ?>
 
@@ -60,18 +60,22 @@ require_once __DIR__ . '/includes/header.php';
         <div class="camera-container border-green" id="camera-container" style="display: none;">
             <video id="camera-preview" autoplay playsinline muted></video>
             <div class="camera-banner ok" id="camera-banner">✅ Pripravené na nahrávanie</div>
+            <button class="help-btn" onclick="FramingGuide.showHelp()" title="Návod" aria-label="Návod na nahrávanie">?</button>
             <div class="countdown-overlay" id="countdown-overlay" style="display: none;">
                 <div class="countdown-num" id="countdown-num">3</div>
             </div>
             <div class="recording-indicator" id="recording-indicator" style="display: none;">
                 <div class="rec-dot"></div>
-                <span id="recording-timer">0:00 / 0:03</span>
+                <span id="recording-timer">0:00 / 0:05</span>
             </div>
         </div>
 
         <!-- Video preview (shown after recording) -->
         <video class="video-preview" id="video-preview" style="display: none;"
                controls autoplay playsinline loop></video>
+
+        <!-- Quality gate results -->
+        <div id="quality-gate-container" style="display: none;"></div>
 
         <!-- Camera loading -->
         <div class="camera-container" id="camera-loading">
@@ -81,7 +85,7 @@ require_once __DIR__ . '/includes/header.php';
         </div>
 
         <!-- Status badges -->
-        <div class="status-row" id="status-badges">
+        <div class="status-row" id="status-badges" aria-live="polite" aria-atomic="true">
             <span class="status-badge status-ok" id="badge-hands">✅ Ruky</span>
             <span class="status-badge status-ok" id="badge-face">✅ Tvár</span>
             <span class="status-badge status-ok" id="badge-light">✅ Svetlo</span>
@@ -94,15 +98,28 @@ require_once __DIR__ . '/includes/header.php';
         <div id="word-section">
             <div class="word-display" id="word-display">...</div>
             <div class="help-link" id="help-links">
-                Nepoznáte znak?
+                Nepoznáte posunok?
             </div>
         </div>
 
         <!-- Record button (before recording) -->
         <div class="record-btn-wrap" id="record-controls">
-            <div class="record-btn" id="record-btn" onclick="startRecording()">
-                <div class="inner"></div>
+            <!-- Auto-record toggle -->
+            <div style="display: flex; align-items: center; justify-content: center; gap: 8px; margin-bottom: 12px;">
+                <label class="toggle-switch">
+                    <input type="checkbox" id="auto-record-toggle" onchange="toggleAutoRecord(this.checked)">
+                    <span class="toggle-slider"></span>
+                </label>
+                <label for="auto-record-toggle" style="font-size: 14px; color: var(--gray); cursor: pointer;">
+                    Auto nahrávanie
+                </label>
+                <button type="button" onclick="FramingGuide.showHelp()" title="Ako to funguje?"
+                        aria-label="Ako to funguje?"
+                        style="background:none;border:none;color:var(--blue);font-size:13px;cursor:pointer;padding:0;">?</button>
             </div>
+            <button type="button" class="record-btn" id="record-btn" onclick="startRecording()" aria-label="Nahrať posunok">
+                <div class="inner"></div>
+            </button>
             <p class="record-btn-label" id="record-label">Stlačte pre nahrávanie</p>
         </div>
 
@@ -119,7 +136,7 @@ require_once __DIR__ . '/includes/header.php';
         <!-- Total counter (desktop) -->
         <div class="card desktop-only" style="text-align: center; margin-top: auto;">
             <p style="font-size: 13px; color: var(--gray);">Celkom nahrané</p>
-            <p style="font-size: 28px; font-weight: 900;"><?= number_format($user['total_recordings']) ?></p>
+            <p style="font-size: 28px; font-weight: 900;" id="total-count"><?= number_format($user['total_recordings']) ?></p>
         </div>
     </div>
 </div>
@@ -127,8 +144,11 @@ require_once __DIR__ . '/includes/header.php';
 <!-- Upload toast -->
 <div class="toast success" id="toast" style="display: none;"></div>
 
-<script src="/js/qualityCheck.js"></script>
-<script src="/js/offlineStore.js"></script>
-<script src="/js/recorder.js"></script>
+<?php $v = '?v=' . time(); ?>
+<script src="/js/qualityCheck.js<?= $v ?>"></script>
+<script src="/js/offlineStore.js<?= $v ?>"></script>
+<script src="/js/framingGuide.js<?= $v ?>"></script>
+<script src="/js/qualityGate.js<?= $v ?>"></script>
+<script src="/js/recorder.js<?= $v ?>"></script>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>

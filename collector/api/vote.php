@@ -45,24 +45,29 @@ if (!$user || $user['total_recordings'] < MIN_RECORDINGS_TO_VALIDATE) {
     exit;
 }
 
-// Can't validate own recordings
-$stmt = $pdo->prepare('SELECT user_id FROM recordings WHERE id = ?');
+// Can't validate own recordings or already-processed ones
+$stmt = $pdo->prepare('SELECT user_id, status FROM recordings WHERE id = ?');
 $stmt->execute([$recording_id]);
 $rec = $stmt->fetch();
-if (!$rec || $rec['user_id'] == $user_id) {
+if (!$rec || $rec['user_id'] == $user_id || $rec['status'] !== 'pending') {
     http_response_code(400);
-    echo json_encode(['error' => 'Nemôžete overovať vlastné nahrávky'], JSON_UNESCAPED_UNICODE);
+    echo json_encode(['error' => 'Nahrávka nie je dostupná na hlasovanie'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
 try {
+    $pdo->beginTransaction();
+
     // Insert vote (unique constraint prevents double voting)
     $stmt = $pdo->prepare('INSERT INTO validations (recording_id, validator_id, vote) VALUES (?, ?, ?)');
     $stmt->execute([$recording_id, $user_id, $vote]);
 
     // Update vote counts
-    $col = $vote ? 'validations_up' : 'validations_down';
-    $pdo->prepare("UPDATE recordings SET $col = $col + 1 WHERE id = ?")->execute([$recording_id]);
+    if ($vote) {
+        $pdo->prepare('UPDATE recordings SET validations_up = validations_up + 1 WHERE id = ?')->execute([$recording_id]);
+    } else {
+        $pdo->prepare('UPDATE recordings SET validations_down = validations_down + 1 WHERE id = ?')->execute([$recording_id]);
+    }
 
     // Check if auto-approve/reject threshold reached
     $stmt = $pdo->prepare('SELECT validations_up, validations_down, video_filename FROM recordings WHERE id = ?');
@@ -72,18 +77,8 @@ try {
     $new_status = null;
     if ($rec['validations_up'] >= VOTES_TO_APPROVE) {
         $new_status = 'approved';
-        // Move video file to approved folder
-        $src = UPLOAD_PENDING . '/' . $rec['video_filename'];
-        $dst = UPLOAD_APPROVED . '/' . $rec['video_filename'];
-        if (file_exists($src)) {
-            if (!is_dir(UPLOAD_APPROVED)) mkdir(UPLOAD_APPROVED, 0755, true);
-            rename($src, $dst);
-        }
     } elseif ($rec['validations_down'] >= VOTES_TO_REJECT) {
         $new_status = 'rejected';
-        // Delete rejected video
-        $path = UPLOAD_PENDING . '/' . $rec['video_filename'];
-        if (file_exists($path)) unlink($path);
 
         // Decrement counters
         $stmt2 = $pdo->prepare('SELECT user_id, sign_id FROM recordings WHERE id = ?');
@@ -113,9 +108,27 @@ try {
         $pdo->prepare('UPDATE recordings SET status = ? WHERE id = ?')->execute([$new_status, $recording_id]);
     }
 
+    $pdo->commit();
+
+    // File operations AFTER commit — filesystem is not transactional
+    if ($new_status === 'approved') {
+        $src = UPLOAD_PENDING . '/' . $rec['video_filename'];
+        $dst = UPLOAD_APPROVED . '/' . $rec['video_filename'];
+        if (file_exists($src)) {
+            if (!is_dir(UPLOAD_APPROVED)) mkdir(UPLOAD_APPROVED, 0755, true);
+            rename($src, $dst);
+        }
+    } elseif ($new_status === 'rejected') {
+        $path = UPLOAD_PENDING . '/' . $rec['video_filename'];
+        if (file_exists($path)) unlink($path);
+    }
+
     echo json_encode(['ok' => true, 'new_status' => $new_status], JSON_UNESCAPED_UNICODE);
 
 } catch (PDOException $e) {
+    if ($pdo->inTransaction()) {
+        $pdo->rollBack();
+    }
     if (str_contains($e->getMessage(), 'Duplicate entry')) {
         http_response_code(409);
         echo json_encode(['error' => 'Už ste hlasovali'], JSON_UNESCAPED_UNICODE);
