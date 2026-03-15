@@ -981,40 +981,87 @@ h3 { font-size: 16px; font-weight: 600; color: var(--gray); }
     }
 }
 
-/* ── Dark Mode ── */
-@media (prefers-color-scheme: dark) {
-    :root {
-        --bg: #0F172A;
-        --card-bg: #1E293B;
-        --dark: #E2E8F0;
-        --light-gray: #334155;
-        --gray: #94A3B8;
-    }
-    body { background: var(--bg); }
-    .card { background: var(--card-bg); border-color: #475569; }
-    .form-group input,
-    .form-group select {
-        background: #1E293B;
-        color: #E2E8F0;
-        border-color: #475569;
-    }
-    .top-nav { background: #020617; }
-    .bottom-nav { background: #0F172A; border-color: #334155; }
-    .admin-table tr:hover { background: #334155; }
-    .consent-card { border-color: #475569; }
-    .consent-card:has(input:checked) {
-        border-color: var(--green);
-        background: #0F2A1C;
-    }
-    .form-group .radio-group label {
-        border-color: #475569;
-        color: var(--dark);
-    }
-    .form-group .radio-group label:has(input:checked) {
-        border-color: var(--blue);
-        background: #1E3A5F;
-    }
-    .btn-gray { background: #334155; color: #E2E8F0; }
-    .btn-outline { background: #1E293B; color: #E2E8F0; border-color: #475569; }
-    .error-msg { background: #450A0A; }
+/* ── Dark Mode (class-based + OS preference as default) ── */
+/* Toggle button in nav */
+.theme-toggle {
+    background: none;
+    border: none;
+    font-size: 20px;
+    cursor: pointer;
+    padding: 4px 8px;
+    line-height: 1;
+    border-radius: 6px;
 }
+.theme-toggle:hover { background: rgba(255,255,255,0.1); }
+
+/* Dark theme styles — applied via html.dark class */
+html.dark {
+    --bg: #0F172A;
+    --card-bg: #1E293B;
+    --dark: #E2E8F0;
+    --light-gray: #334155;
+    --gray: #94A3B8;
+    /* Keep button colors dark enough for white text (WCAG AA 4.5:1) */
+    --blue: #2563EB;
+    --green: #16A34A;
+    --red: #DC2626;
+}
+html.dark body { background: var(--bg); color: var(--dark); }
+html.dark .card { background: var(--card-bg); border-color: #475569; }
+html.dark .form-group input,
+html.dark .form-group select {
+    background: #1E293B;
+    color: #E2E8F0;
+    border-color: #475569;
+}
+html.dark .form-group label { color: var(--gray); }
+html.dark .top-nav { background: #020617; }
+html.dark .bottom-nav { background: #0F172A; border-color: #334155; }
+html.dark .admin-table tr:hover { background: #334155; }
+html.dark .consent-card { border-color: #475569; }
+html.dark .consent-card:has(input:checked) {
+    border-color: var(--green);
+    background: #0F2A1C;
+}
+html.dark .form-group .radio-group label {
+    border-color: #475569;
+    color: var(--dark);
+}
+html.dark .form-group .radio-group label:has(input:checked) {
+    border-color: #60A5FA;
+    background: #1E3A5F;
+}
+html.dark .btn-gray { background: #334155; color: #E2E8F0; }
+html.dark .btn-outline { background: #1E293B; color: #E2E8F0; border-color: #475569; }
+html.dark .error-msg { background: #450A0A; color: #FCA5A5; }
+/* Links use lighter blue for readability on dark bg — but NOT buttons */
+html.dark a:not(.btn) { color: #93C5FD; }
+html.dark .help-link a { color: #93C5FD; }
+html.dark .nav-links a { color: #94A3B8; }
+html.dark .nav-links a.active { color: white; }
+/* Buttons keep white text on dark-enough backgrounds */
+html.dark .btn-blue { background: #2563EB; color: white; }
+html.dark .btn-green, html.dark [style*="var(--green)"] { background: #15803D !important; color: white !important; }
+html.dark .btn-red { background: #B91C1C; color: white; }
+html.dark .skip-link { color: white; background: #1E293B; }
+html.dark .skip-link:focus { color: white; background: #1E293B; }
+html.dark .progress-bar { background: #334155; }
+html.dark .word-display { color: var(--dark); }
+html.dark .status-badge { color: var(--dark); }
+html.dark .status-badge.status-ok { background: #064E3B; color: #6EE7B7; }
+html.dark .status-badge.status-warn { background: #78350F; color: #FDE68A; }
+html.dark .status-badge.status-err { background: #450A0A; color: #FCA5A5; }
+html.dark .skip-link:focus { background: #1E293B; color: #E2E8F0; }
+/* Inline light-bg cards (feature boxes, summary boxes) need dark bg */
+html.dark [style*="background: #EFF6FF"],
+html.dark [style*="background:#EFF6FF"] { background: #1E3A5F !important; color: #E2E8F0 !important; }
+html.dark [style*="background: #F0FDF4"],
+html.dark [style*="background:#F0FDF4"] { background: #0F2A1C !important; color: #E2E8F0 !important; }
+html.dark [style*="background: #DCFCE7"],
+html.dark [style*="background:#DCFCE7"] { background: #064E3B !important; color: #6EE7B7 !important; }
+html.dark [style*="background: #FEF3C7"],
+html.dark [style*="background:#FEF3C7"] { background: #78350F !important; color: #FDE68A !important; }
+html.dark [style*="color: var(--gray)"] { color: #94A3B8 !important; }
+/* Footer and cookie banner */
+html.dark footer { border-color: #334155 !important; }
+html.dark #cookie-banner { background: #020617 !important; }

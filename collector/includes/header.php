@@ -47,6 +47,26 @@ $user = $logged_in ? get_user() : null;
         </div>
         <a href="/api/auth.php?action=logout" class="desktop-only" style="color:#9CA3AF;font-size:13px;text-decoration:none;margin-left:8px;" title="Odhlásiť sa">↪ Odhlásiť</a>
         <?php endif; ?>
+        <button class="theme-toggle" id="theme-toggle" onclick="toggleTheme()" aria-label="Prepnúť tmavý/svetlý režim" title="Tmavý/svetlý režim">🌙</button>
     </nav>
+    <script>
+    function toggleTheme() {
+        const html = document.documentElement;
+        const isDark = html.classList.toggle('dark');
+        localStorage.setItem('spj_theme', isDark ? 'dark' : 'light');
+        document.getElementById('theme-toggle').textContent = isDark ? '☀️' : '🌙';
+    }
+    (function() {
+        const saved = localStorage.getItem('spj_theme');
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        if (saved === 'dark' || (!saved && prefersDark)) {
+            document.documentElement.classList.add('dark');
+            document.addEventListener('DOMContentLoaded', function() {
+                var btn = document.getElementById('theme-toggle');
+                if (btn) btn.textContent = '☀️';
+            });
+        }
+    })();
+    </script>
 
     <main class="page-content" id="main-content">
