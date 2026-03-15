@@ -1061,7 +1061,13 @@ html.dark [style*="background: #DCFCE7"],
 html.dark [style*="background:#DCFCE7"] { background: #064E3B !important; color: #6EE7B7 !important; }
 html.dark [style*="background: #FEF3C7"],
 html.dark [style*="background:#FEF3C7"] { background: #78350F !important; color: #FDE68A !important; }
+html.dark [style*="background: #FEE2E2"],
+html.dark [style*="background:#FEE2E2"] { background: #450A0A !important; color: #FCA5A5 !important; }
+html.dark [style*="background: #DBEAFE"],
+html.dark [style*="background:#DBEAFE"] { background: #1E3A5F !important; color: #93C5FD !important; }
 html.dark [style*="color: var(--gray)"] { color: #94A3B8 !important; }
+html.dark [style*="color: #DC2626"] { color: #FCA5A5 !important; }
+html.dark [style*="color: #22C55E"] { color: #6EE7B7 !important; }
 /* Footer and cookie banner */
 html.dark footer { border-color: #334155 !important; }
 html.dark #cookie-banner { background: #020617 !important; }
