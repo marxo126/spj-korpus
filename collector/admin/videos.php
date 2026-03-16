@@ -77,9 +77,9 @@ $total_pages = ceil($total / $per_page);
              onclick="openVideoModal('<?= htmlspecialchars($src, ENT_QUOTES) ?>')" data-src="<?= htmlspecialchars($src) ?>">
             <video muted loop playsinline preload="none"
                    onmouseenter="playPreview(this,'<?= htmlspecialchars($src, ENT_QUOTES) ?>')"
-                   onmouseleave="this.pause();this.currentTime=0"
+                   onmouseleave="pausePreview(this)"
                    ontouchstart="playPreview(this,'<?= htmlspecialchars($src, ENT_QUOTES) ?>')"
-                   ontouchend="this.pause();this.currentTime=0"
+                   ontouchend="pausePreview(this)"
                    data-src="<?= htmlspecialchars($src) ?>"
             ></video>
             <span class="video-status-badge"><?= $status_icon ?></span>
@@ -142,23 +142,37 @@ $total_pages = ceil($total / $per_page);
 </div>
 
 <script>
-// Safari requires user gesture for play() — catch and show play button fallback
+// Track play promises per video to avoid play/pause race condition (Safari bug)
+var _playPromises = new WeakMap();
+
 function playPreview(el, src) {
     if (!el.src) el.src = src;
     var p = el.play();
-    if (p && p.catch) p.catch(function() {
-        // Safari blocked autoplay — click to open modal instead
-        el.closest('.video-preview-wrap').click();
-    });
+    if (p) {
+        _playPromises.set(el, p);
+        p.then(function() { _playPromises.delete(el); })
+         .catch(function() { _playPromises.delete(el); });
+    }
 }
+
+function pausePreview(el) {
+    var p = _playPromises.get(el);
+    if (p) {
+        // Wait for play to resolve before pausing — avoids "interrupted" error
+        p.then(function() { el.pause(); el.currentTime = 0; })
+         .catch(function() {});
+    } else {
+        el.pause();
+        el.currentTime = 0;
+    }
+}
+
 function openVideoModal(src) {
     var modal = document.getElementById('video-modal');
     var video = document.getElementById('modal-video');
     video.src = src;
     modal.style.display = 'flex';
-    // Safari: play after user click (gesture)
     video.play().catch(function(){});
-    // Stop on click outside or close
     modal.onclick = function(e) {
         if (e.target === modal || e.target.classList.contains('close-btn')) {
             video.pause();

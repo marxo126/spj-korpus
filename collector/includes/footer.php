@@ -58,7 +58,11 @@
                 }).catch(function(){});
             } catch(e) {}
         }
+        // Suppress known harmless errors
+        var _ignore = ['play() request was interrupted', 'operation is not supported'];
         window.onerror = function(msg, src, line, col, err) {
+            var m = String(msg).toLowerCase();
+            for (var i = 0; i < _ignore.length; i++) { if (m.indexOf(_ignore[i]) !== -1) return; }
             reportError(msg, src, line, col, err && err.stack ? err.stack : '');
         };
         window.addEventListener('unhandledrejection', function(e) {
