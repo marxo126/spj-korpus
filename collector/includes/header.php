@@ -4,6 +4,7 @@
  */
 
 require_once __DIR__ . '/auth.php';
+require_once __DIR__ . '/admin_auth.php';
 start_session();
 
 $current_page = basename($_SERVER['SCRIPT_NAME'], '.php');
@@ -19,6 +20,10 @@ $user = $logged_in ? get_user() : null;
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title><?= htmlspecialchars($page_title ?? SITE_NAME) ?></title>
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="<?= htmlspecialchars($page_title ?? SITE_NAME) ?>">
+    <meta property="og:description" content="Pomôžte vytvoriť prvý veľký korpus slovenského posunkového jazyka">
+    <meta property="og:url" content="<?= htmlspecialchars(SITE_URL . $_SERVER['REQUEST_URI']) ?>">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
@@ -38,7 +43,9 @@ $user = $logged_in ? get_user() : null;
         <div class="nav-links desktop-only">
             <a href="/themes.php" class="<?= $current_page === 'themes' ? 'active' : '' ?>">Témy</a>
             <a href="/record.php" class="<?= $current_page === 'record' ? 'active' : '' ?>">Nahrať</a>
+            <?php if (is_researcher()): ?>
             <a href="/validate.php" class="<?= $current_page === 'validate' ? 'active' : '' ?>">Overiť</a>
+            <?php endif; ?>
             <a href="/thanks.php" class="<?= $current_page === 'thanks' ? 'active' : '' ?>">Ďakujeme</a>
             <a href="/progress.php" class="<?= $current_page === 'progress' ? 'active' : '' ?>">Profil</a>
             <?php if ($user && (!empty($user['is_admin']) || !empty($user['is_researcher']))): ?>
