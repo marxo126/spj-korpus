@@ -73,16 +73,13 @@ $total_pages = ceil($total / $per_page);
         $status_icon = $status_labels[$r['status']] ?? '?';
     ?>
     <div class="video-card">
-        <div class="video-preview-wrap"
-             onclick="openVideoModal('<?= htmlspecialchars($src, ENT_QUOTES) ?>')" data-src="<?= htmlspecialchars($src) ?>">
-            <video muted loop playsinline preload="none"
-                   onmouseenter="playPreview(this,'<?= htmlspecialchars($src, ENT_QUOTES) ?>')"
-                   onmouseleave="pausePreview(this)"
-                   ontouchstart="playPreview(this,'<?= htmlspecialchars($src, ENT_QUOTES) ?>')"
-                   ontouchend="pausePreview(this)"
-                   data-src="<?= htmlspecialchars($src) ?>"
+        <div class="video-preview-wrap" data-src="<?= htmlspecialchars($src) ?>">
+            <video muted loop playsinline preload="metadata"
+                   src="<?= htmlspecialchars($src) ?>"
+                   onmouseenter="hoverPlay(this)" onmouseleave="hoverPause(this)"
             ></video>
             <span class="video-status-badge"><?= $status_icon ?></span>
+            <button class="video-play-btn" onclick="openVideoModal('<?= htmlspecialchars($src, ENT_QUOTES) ?>')" aria-label="Prehrať video">▶</button>
         </div>
         <div class="video-card-info">
             <strong><?= htmlspecialchars($r['word_sk']) ?></strong>
@@ -141,44 +138,44 @@ $total_pages = ceil($total / $per_page);
     <video id="modal-video" controls autoplay style="max-width:90%;max-height:80vh;border-radius:12px;"></video>
 </div>
 
+<style>
+.video-play-btn {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    background: rgba(0,0,0,0.3); border: none; cursor: pointer;
+    font-size: 32px; color: white; display: flex; align-items: center;
+    justify-content: center; opacity: 1; transition: opacity 0.2s;
+}
+.video-preview-wrap:hover .video-play-btn { opacity: 0; }
+@media (max-width: 767px) {
+    .video-preview-wrap:hover .video-play-btn { opacity: 1; }
+}
+</style>
 <script>
-// Track play promises per video to avoid play/pause race condition (Safari bug)
-var _playPromises = new WeakMap();
-
-function playPreview(el, src) {
-    if (!el.src) el.src = src;
+// Desktop: hover to preview (silently catch if browser blocks)
+function hoverPlay(el) {
+    if (window.innerWidth < 768) return; // mobile: tap play button instead
     var p = el.play();
-    if (p) {
-        _playPromises.set(el, p);
-        p.then(function() { _playPromises.delete(el); })
-         .catch(function() { _playPromises.delete(el); });
-    }
+    if (p) p.catch(function(){});
+}
+function hoverPause(el) {
+    try { el.pause(); el.currentTime = 0; } catch(e) {}
 }
 
-function pausePreview(el) {
-    var p = _playPromises.get(el);
-    if (p) {
-        // Wait for play to resolve before pausing — avoids "interrupted" error
-        p.then(function() { el.pause(); el.currentTime = 0; })
-         .catch(function() {});
-    } else {
-        el.pause();
-        el.currentTime = 0;
-    }
-}
-
+// Modal: works on all browsers — user gesture (click/tap) triggers play
 function openVideoModal(src) {
+    event.stopPropagation();
     var modal = document.getElementById('video-modal');
     var video = document.getElementById('modal-video');
     video.src = src;
     modal.style.display = 'flex';
     video.play().catch(function(){});
-    modal.onclick = function(e) {
-        if (e.target === modal || e.target.classList.contains('close-btn')) {
-            video.pause();
-            video.src = '';
-            modal.style.display = 'none';
-        }
-    };
 }
+document.getElementById('video-modal').addEventListener('click', function(e) {
+    if (e.target === this || e.target.classList.contains('close-btn')) {
+        var video = document.getElementById('modal-video');
+        video.pause(); video.removeAttribute('src'); video.load();
+        this.style.display = 'none';
+    }
+});
+</script>
 </script>
