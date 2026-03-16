@@ -77,13 +77,9 @@ if (isset($_SERVER['HTTP_RANGE'])) {
     header("Content-Length: $length");
     $fp = fopen($path, 'rb');
     fseek($fp, $start);
-    $remaining = $length;
-    while ($remaining > 0 && !feof($fp)) {
-        $chunk = min(8192, $remaining);
-        echo fread($fp, $chunk);
-        $remaining -= $chunk;
-        flush();
-    }
+    $out = fopen('php://output', 'wb');
+    stream_copy_to_stream($fp, $out, $length);
+    fclose($out);
     fclose($fp);
 } else {
     header('Content-Length: ' . $size);

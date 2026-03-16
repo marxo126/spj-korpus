@@ -7,11 +7,17 @@
 
 header('Content-Type: application/json');
 require_once __DIR__ . '/../includes/config.php';
-require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/admin_auth.php';
 
 if (!is_logged_in()) {
     http_response_code(401);
     echo json_encode(['error' => 'Nie ste prihlásený'], JSON_UNESCAPED_UNICODE);
+    exit;
+}
+
+if (!is_researcher()) {
+    http_response_code(403);
+    echo json_encode(['error' => 'Prístup len pre výskumníkov'], JSON_UNESCAPED_UNICODE);
     exit;
 }
 
@@ -33,19 +39,8 @@ if ($recording_id <= 0 || ($vote !== 0 && $vote !== 1)) {
     exit;
 }
 
-// Check user has enough recordings to validate
-$pdo = get_db();
-$stmt = $pdo->prepare('SELECT total_recordings FROM users WHERE id = ?');
-$stmt->execute([$user_id]);
-$user = $stmt->fetch();
-
-if (!$user || $user['total_recordings'] < MIN_RECORDINGS_TO_VALIDATE) {
-    http_response_code(403);
-    echo json_encode(['error' => "Potrebujete aspoň " . MIN_RECORDINGS_TO_VALIDATE . " nahrávok"], JSON_UNESCAPED_UNICODE);
-    exit;
-}
-
 // Can't validate own recordings or already-processed ones
+$pdo = get_db();
 $stmt = $pdo->prepare('SELECT user_id, status FROM recordings WHERE id = ?');
 $stmt->execute([$recording_id]);
 $rec = $stmt->fetch();
@@ -129,7 +124,7 @@ try {
     if ($pdo->inTransaction()) {
         $pdo->rollBack();
     }
-    if (str_contains($e->getMessage(), 'Duplicate entry')) {
+    if ($e->getCode() === '23000') { // SQLSTATE integrity constraint (duplicate vote)
         http_response_code(409);
         echo json_encode(['error' => 'Už ste hlasovali'], JSON_UNESCAPED_UNICODE);
     } else {

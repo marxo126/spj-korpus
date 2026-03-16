@@ -4,41 +4,28 @@
  */
 
 require_once __DIR__ . '/includes/config.php';
-require_once __DIR__ . '/includes/auth.php';
-require_login();
-
-$user = get_user();
-$can_validate = $user['total_recordings'] >= MIN_RECORDINGS_TO_VALIDATE;
+require_once __DIR__ . '/includes/admin_auth.php';
+require_researcher();
 
 $page_title = 'Overiť nahrávky — ' . SITE_NAME;
 require_once __DIR__ . '/includes/header.php';
 ?>
 
-<?php if (!$can_validate): ?>
-<div class="card" style="text-align: center; margin-top: 40px;">
-    <h2>🔒 Overovanie zatiaľ nie je dostupné</h2>
-    <p style="color: var(--gray); margin: 16px 0;">
-        Potrebujete aspoň <strong><?= MIN_RECORDINGS_TO_VALIDATE ?></strong> vlastných nahrávok.
-    </p>
-    <p style="font-size: 28px; font-weight: 900; margin-bottom: 8px;">
-        <?= $user['total_recordings'] ?> / <?= MIN_RECORDINGS_TO_VALIDATE ?>
-    </p>
-    <div class="progress-bar" style="margin-bottom: 20px;">
-        <div class="fill" style="width: <?= min(100, ($user['total_recordings'] / MIN_RECORDINGS_TO_VALIDATE) * 100) ?>%;"></div>
-    </div>
-    <a href="/record.php" class="btn btn-blue">⏺ Nahrať posunky →</a>
-</div>
-
-<?php else: ?>
 <h2 style="text-align: center; margin-bottom: 16px;">Overenie nahrávky</h2>
 
 <!-- Word display -->
 <div class="word-display" id="validate-word">...</div>
 <div class="help-link" id="validate-links"></div>
 
+<!-- Recording context -->
+<div id="validate-meta" style="text-align: center; font-size: 13px; color: var(--gray); margin-bottom: 8px;"></div>
+
 <!-- Video -->
 <video class="video-preview" id="validate-video" autoplay playsinline loop
        style="margin-bottom: 16px;"></video>
+
+<!-- Vote progress -->
+<div id="vote-progress" style="text-align: center; font-size: 13px; color: var(--gray); margin-bottom: 12px;"></div>
 
 <p style="text-align: center; font-size: 17px; font-weight: 600; margin-bottom: 16px;">
     Je tento posunok správny?
@@ -75,7 +62,9 @@ async function loadNextValidation() {
         if (data.error) {
             document.getElementById('validate-word').style.display = 'none';
             document.getElementById('validate-links').style.display = 'none';
+            document.getElementById('validate-meta').style.display = 'none';
             document.getElementById('validate-video').style.display = 'none';
+            document.getElementById('vote-progress').style.display = 'none';
             document.querySelector('.validate-btns').style.display = 'none';
             document.getElementById('skip-btn').style.display = 'none';
             document.getElementById('no-more').style.display = 'block';
@@ -93,9 +82,21 @@ async function loadNextValidation() {
         if (links) links = 'Referencia: ' + links;
         document.getElementById('validate-links').innerHTML = links;
 
+        // Recording context: contributor, hand, variant count
+        let meta = [];
+        if (data.contributor_name) meta.push(data.contributor_name);
+        if (data.dominant_hand) meta.push(data.dominant_hand === 'left' ? 'ľavák' : 'pravák');
+        meta.push(`${data.variants_approved} schválených / ${data.variants_total} celkom`);
+        document.getElementById('validate-meta').textContent = meta.join(' · ');
+
+        // Vote progress on this recording
+        let vp = `👍 ${data.validations_up}/${<?= VOTES_TO_APPROVE ?>}`;
+        vp += `  👎 ${data.validations_down}/${<?= VOTES_TO_REJECT ?>}`;
+        document.getElementById('vote-progress').textContent = vp;
+
         // Video
         const video = document.getElementById('validate-video');
-        video.src = '/api/video.php?file=' + encodeURIComponent(data.video_filename) + '&dir=pending';
+        video.src = '/video/pending/' + encodeURIComponent(data.video_filename);
         video.style.display = 'block';
     } catch (err) {
         console.error('Failed to load validation:', err);
@@ -121,6 +122,5 @@ async function vote(value) {
     }
 }
 </script>
-<?php endif; ?>
 
 <?php require_once __DIR__ . '/includes/footer.php'; ?>
