@@ -135,7 +135,13 @@ $total_pages = ceil($total / $per_page);
 <!-- Video modal -->
 <div id="video-modal" class="video-modal" style="display:none;" onclick="this.style.display='none'">
     <button class="close-btn" onclick="document.getElementById('video-modal').style.display='none'">×</button>
-    <video id="modal-video" controls autoplay style="max-width:90%;max-height:80vh;border-radius:12px;"></video>
+    <video id="modal-video" controls autoplay playsinline muted style="max-width:90%;max-height:80vh;border-radius:12px;">
+        <source id="modal-source" src="" type="video/mp4">
+    </video>
+    <button onclick="var v=document.getElementById('modal-video');v.muted=false;"
+            style="position:absolute;bottom:20px;right:20px;background:rgba(0,0,0,0.7);color:white;border:none;padding:8px 16px;border-radius:8px;font-size:14px;cursor:pointer;">
+        🔊 Zvuk
+    </button>
 </div>
 
 <style>
@@ -163,17 +169,24 @@ function hoverPause(el) {
 
 // Modal: works on all browsers — user gesture (click/tap) triggers play
 function openVideoModal(src) {
-    event.stopPropagation();
+    if (event) event.stopPropagation();
     var modal = document.getElementById('video-modal');
     var video = document.getElementById('modal-video');
-    video.src = src;
+    var source = document.getElementById('modal-source');
+    // Detect type from URL
+    var type = src.indexOf('.webm') !== -1 ? 'video/webm' : 'video/mp4';
+    source.src = src;
+    source.type = type;
+    video.load(); // Safari needs explicit load() after changing source
     modal.style.display = 'flex';
     video.play().catch(function(){});
 }
 document.getElementById('video-modal').addEventListener('click', function(e) {
     if (e.target === this || e.target.classList.contains('close-btn')) {
         var video = document.getElementById('modal-video');
-        video.pause(); video.removeAttribute('src'); video.load();
+        video.pause();
+        document.getElementById('modal-source').src = '';
+        video.load();
         this.style.display = 'none';
     }
 });
