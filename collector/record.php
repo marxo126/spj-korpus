@@ -29,6 +29,21 @@ $page_title = 'Nahrať posunok — ' . SITE_NAME;
 require_once __DIR__ . '/includes/header.php';
 ?>
 
+<?php if (!is_email_verified()): ?>
+<div style="background: #FEF3C7; border: 2px solid #F59E0B; border-radius: 12px; padding: 16px; margin-bottom: 16px; text-align: center;">
+    <strong>📧 Overte svoj email</strong>
+    <p style="font-size: 14px; color: #92400E; margin-top: 4px;">
+        Skontrolujte schránku <strong><?= htmlspecialchars($user['email']) ?></strong> a kliknite na overovací odkaz.
+        Nahrávanie funguje aj bez overenia, ale overený účet je bezpečnejší.
+    </p>
+    <form method="POST" action="/verify-email.php" style="margin-top: 8px; display: inline;">
+        <?= csrf_field() ?>
+        <input type="hidden" name="resend" value="1">
+        <button type="submit" style="background: none; border: none; color: #2563EB; font-weight: 600; cursor: pointer; font-size: 14px;">Poslať znova →</button>
+    </form>
+</div>
+<?php endif; ?>
+
 <?php if ($theme): ?>
 <a href="/themes.php" style="display: inline-block; margin-bottom: 12px; color: var(--blue); text-decoration: none; font-weight: 600; font-size: 15px;">
     ← <?= htmlspecialchars($theme['emoji'] . ' ' . $theme['name']) ?>

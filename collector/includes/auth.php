@@ -268,6 +268,55 @@ function send_reset_email(string $email, string $token): bool {
     return @mail($email, $subject, $body, $headers);
 }
 
+function create_email_verification(int $user_id, string $email): ?string {
+    $token = bin2hex(random_bytes(32));
+    $hash = hash('sha256', $token);
+    $expires = date('Y-m-d H:i:s', time() + 86400); // 24 hours
+
+    $pdo = get_db();
+    $pdo->prepare('UPDATE users SET email_verify_token = ?, email_verify_expires = ? WHERE id = ?')
+        ->execute([$hash, $expires, $user_id]);
+
+    return $token;
+}
+
+function verify_email_token(string $token): ?int {
+    $hash = hash('sha256', $token);
+    $pdo = get_db();
+    $stmt = $pdo->prepare('SELECT id FROM users WHERE email_verify_token = ? AND email_verify_expires > NOW() AND email_verified = 0');
+    $stmt->execute([$hash]);
+    $user = $stmt->fetch();
+    if (!$user) return null;
+
+    $pdo->prepare('UPDATE users SET email_verified = 1, email_verify_token = NULL, email_verify_expires = NULL WHERE id = ?')
+        ->execute([$user['id']]);
+    return (int) $user['id'];
+}
+
+function send_verification_email(string $email, string $token): bool {
+    $verify_url = SITE_URL . '/verify-email.php?token=' . urlencode($token);
+
+    error_log("Email verification link for {$email}: {$verify_url}");
+
+    $subject = SITE_NAME . ' — Overenie emailu';
+    $body = "Dobrý deň,\n\n";
+    $body .= "Ďakujeme za registráciu na " . SITE_NAME . ".\n\n";
+    $body .= "Kliknite na tento odkaz pre overenie vášho emailu:\n";
+    $body .= $verify_url . "\n\n";
+    $body .= "Odkaz je platný 24 hodín.\n\n";
+    $body .= "Ak ste sa neregistrovali, tento email ignorujte.\n";
+
+    $headers = "From: noreply@" . parse_url(SITE_URL, PHP_URL_HOST) . "\r\n";
+    $headers .= "Content-Type: text/plain; charset=UTF-8\r\n";
+
+    return @mail($email, $subject, $body, $headers);
+}
+
+function is_email_verified(): bool {
+    $user = get_user();
+    return $user && !empty($user['email_verified']);
+}
+
 function get_community_stats(): array {
     $pdo = get_db();
     $stats = $pdo->query('

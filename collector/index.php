@@ -69,6 +69,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             ];
             $user_id = register_user($email, $password, $demographics);
             if ($user_id) {
+                // Send verification email
+                $verify_token = create_email_verification($user_id, $email);
+                send_verification_email($email, $verify_token);
+
                 login_user($user_id);
                 header('Location: /themes.php');
                 exit;
