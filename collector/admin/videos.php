@@ -76,9 +76,9 @@ $total_pages = ceil($total / $per_page);
         <div class="video-preview-wrap"
              onclick="openVideoModal('<?= htmlspecialchars($src, ENT_QUOTES) ?>')" data-src="<?= htmlspecialchars($src) ?>">
             <video muted loop playsinline preload="none"
-                   onmouseenter="if(!this.src)this.src='<?= htmlspecialchars($src) ?>';this.play()"
+                   onmouseenter="playPreview(this,'<?= htmlspecialchars($src, ENT_QUOTES) ?>')"
                    onmouseleave="this.pause();this.currentTime=0"
-                   ontouchstart="if(!this.src)this.src='<?= htmlspecialchars($src) ?>';this.play()"
+                   ontouchstart="playPreview(this,'<?= htmlspecialchars($src, ENT_QUOTES) ?>')"
                    ontouchend="this.pause();this.currentTime=0"
                    data-src="<?= htmlspecialchars($src) ?>"
             ></video>
@@ -98,15 +98,21 @@ $total_pages = ceil($total / $per_page);
                 <input type="hidden" name="action" value="approve">
                 <input type="hidden" name="recording_id" value="<?= $r['id'] ?>">
                 <?= csrf_field() ?>
-                <button type="submit" class="btn-approve">✓</button>
+                <button type="submit" class="btn-approve" title="Schváliť">✓</button>
+            </form>
+            <form method="POST" action="/admin/api/videos.php" style="display:inline;">
+                <input type="hidden" name="action" value="reject">
+                <input type="hidden" name="recording_id" value="<?= $r['id'] ?>">
+                <?= csrf_field() ?>
+                <button type="submit" class="btn-delete" title="Zamietnuť" style="background:#F59E0B;">✗</button>
             </form>
             <?php endif; ?>
             <form method="POST" action="/admin/api/videos.php" style="display:inline;"
-                  onsubmit="return confirm('Zmazať video?')">
+                  onsubmit="return confirm('Natrvalo zmazať video?')">
                 <input type="hidden" name="action" value="delete">
                 <input type="hidden" name="recording_id" value="<?= $r['id'] ?>">
                 <?= csrf_field() ?>
-                <button type="submit" class="btn-delete">✗</button>
+                <button type="submit" class="btn-delete" title="Vymazať">🗑</button>
             </form>
         </div>
     </div>
@@ -136,9 +142,29 @@ $total_pages = ceil($total / $per_page);
 </div>
 
 <script>
+// Safari requires user gesture for play() — catch and show play button fallback
+function playPreview(el, src) {
+    if (!el.src) el.src = src;
+    var p = el.play();
+    if (p && p.catch) p.catch(function() {
+        // Safari blocked autoplay — click to open modal instead
+        el.closest('.video-preview-wrap').click();
+    });
+}
 function openVideoModal(src) {
+    var modal = document.getElementById('video-modal');
     var video = document.getElementById('modal-video');
     video.src = src;
-    document.getElementById('video-modal').style.display = 'flex';
+    modal.style.display = 'flex';
+    // Safari: play after user click (gesture)
+    video.play().catch(function(){});
+    // Stop on click outside or close
+    modal.onclick = function(e) {
+        if (e.target === modal || e.target.classList.contains('close-btn')) {
+            video.pause();
+            video.src = '';
+            modal.style.display = 'none';
+        }
+    };
 }
 </script>
