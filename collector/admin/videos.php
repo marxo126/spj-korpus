@@ -68,18 +68,17 @@ $total_pages = ceil($total / $per_page);
 <div class="video-grid">
     <?php foreach ($recordings as $r):
         $dir = $r['status'] === 'approved' ? 'approved' : 'pending';
-        $src = '/api/video.php?file=' . urlencode($r['video_filename']) . '&dir=' . $dir;
+        $src = '/video/' . $dir . '/' . urlencode($r['video_filename']);
         $status_labels = ['pending' => '⏳', 'approved' => '✅', 'rejected' => '❌'];
         $status_icon = $status_labels[$r['status']] ?? '?';
     ?>
     <div class="video-card">
-        <div class="video-preview-wrap" data-src="<?= htmlspecialchars($src) ?>">
-            <video muted loop playsinline preload="metadata"
-                   src="<?= htmlspecialchars($src) ?>"
-                   onmouseenter="hoverPlay(this)" onmouseleave="hoverPause(this)"
-            ></video>
+        <div class="video-preview-wrap"
+             onclick="openVideoModal('<?= htmlspecialchars($src, ENT_QUOTES) ?>')"
+             onmouseenter="hoverPlay(this)" onmouseleave="hoverPause(this)">
+            <video muted loop playsinline preload="none" data-src="<?= htmlspecialchars($src) ?>"></video>
             <span class="video-status-badge"><?= $status_icon ?></span>
-            <button class="video-play-btn" onclick="openVideoModal('<?= htmlspecialchars($src, ENT_QUOTES) ?>')" aria-label="Prehrať video">▶</button>
+            <span class="video-play-btn">▶</span>
         </div>
         <div class="video-card-info">
             <strong><?= htmlspecialchars($r['word_sk']) ?></strong>
@@ -135,49 +134,57 @@ $total_pages = ceil($total / $per_page);
 <!-- Video modal -->
 <div id="video-modal" class="video-modal" style="display:none;" onclick="this.style.display='none'">
     <button class="close-btn" onclick="document.getElementById('video-modal').style.display='none'">×</button>
-    <video id="modal-video" controls autoplay playsinline muted style="max-width:90%;max-height:80vh;border-radius:12px;">
-        <source id="modal-source" src="" type="video/mp4">
-    </video>
-    <button onclick="var v=document.getElementById('modal-video');v.muted=false;"
-            style="position:absolute;bottom:20px;right:20px;background:rgba(0,0,0,0.7);color:white;border:none;padding:8px 16px;border-radius:8px;font-size:14px;cursor:pointer;">
-        🔊 Zvuk
-    </button>
+    <video id="modal-video" controls autoplay playsinline style="max-width:90%;max-height:80vh;border-radius:12px;"></video>
 </div>
 
 <style>
 .video-play-btn {
     position: absolute; inset: 0; width: 100%; height: 100%;
-    background: rgba(0,0,0,0.3); border: none; cursor: pointer;
-    font-size: 32px; color: white; display: flex; align-items: center;
-    justify-content: center; opacity: 1; transition: opacity 0.2s;
+    background: rgba(0,0,0,0.15); border: none; cursor: pointer;
+    font-size: 36px; color: white; display: flex; align-items: center;
+    justify-content: center; transition: opacity 0.2s;
+    text-shadow: 0 2px 8px rgba(0,0,0,0.5); pointer-events: none;
 }
 .video-preview-wrap:hover .video-play-btn { opacity: 0; }
-@media (max-width: 767px) {
-    .video-preview-wrap:hover .video-play-btn { opacity: 1; }
-}
+@media (max-width: 767px) { .video-preview-wrap:hover .video-play-btn { opacity: 1; } }
 </style>
 <script>
-// Desktop: hover to preview (silently catch if browser blocks)
-function hoverPlay(el) {
-    if (window.innerWidth < 768) return; // mobile: tap play button instead
-    var p = el.play();
+// Lazy-load: set src when scrolled into view
+(function() {
+    var vids = document.querySelectorAll('video[data-src]');
+    if ('IntersectionObserver' in window) {
+        var obs = new IntersectionObserver(function(entries) {
+            entries.forEach(function(e) {
+                if (e.isIntersecting) {
+                    e.target.src = e.target.dataset.src;
+                    e.target.preload = 'metadata';
+                    obs.unobserve(e.target);
+                }
+            });
+        }, { rootMargin: '200px' });
+        vids.forEach(function(v) { obs.observe(v); });
+    } else {
+        vids.forEach(function(v) { v.src = v.dataset.src; v.preload = 'metadata'; });
+    }
+})();
+
+// Hover play (Chrome/Firefox — Safari silently fails, that's OK)
+function hoverPlay(wrap) {
+    var v = wrap.querySelector('video');
+    if (!v || !v.src) { v.src = v.dataset.src; v.preload = 'metadata'; }
+    var p = v.play();
     if (p) p.catch(function(){});
 }
-function hoverPause(el) {
-    try { el.pause(); el.currentTime = 0; } catch(e) {}
+function hoverPause(wrap) {
+    var v = wrap.querySelector('video');
+    if (v) { try { v.pause(); v.currentTime = 0; } catch(e){} }
 }
 
-// Modal: works on all browsers — user gesture (click/tap) triggers play
+// Click opens modal — works in ALL browsers (user gesture = play allowed)
 function openVideoModal(src) {
-    if (event) event.stopPropagation();
     var modal = document.getElementById('video-modal');
     var video = document.getElementById('modal-video');
-    var source = document.getElementById('modal-source');
-    // Detect type from URL
-    var type = src.indexOf('.webm') !== -1 ? 'video/webm' : 'video/mp4';
-    source.src = src;
-    source.type = type;
-    video.load(); // Safari needs explicit load() after changing source
+    video.src = src;
     modal.style.display = 'flex';
     video.play().catch(function(){});
 }
@@ -185,10 +192,8 @@ document.getElementById('video-modal').addEventListener('click', function(e) {
     if (e.target === this || e.target.classList.contains('close-btn')) {
         var video = document.getElementById('modal-video');
         video.pause();
-        document.getElementById('modal-source').src = '';
-        video.load();
+        video.removeAttribute('src');
         this.style.display = 'none';
     }
 });
-</script>
 </script>

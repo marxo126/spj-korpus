@@ -9,6 +9,9 @@ php_value memory_limit 64M
 # Force HTTPS (required for camera access) — skip for localhost/Docker
 RewriteEngine On
 
+# Safari-compatible video URLs: /video/pending/rec_xxx.mp4 → /api/video.php?file=rec_xxx.mp4&dir=pending
+RewriteRule ^video/(pending|approved)/(.+\.(mp4|webm))$ /api/video.php?file=$2&dir=$1 [L,QSA]
+
 # Skip rewrite for existing files and directories
 RewriteCond %{REQUEST_FILENAME} -f [OR]
 RewriteCond %{REQUEST_FILENAME} -d
@@ -33,7 +36,7 @@ Options -Indexes
     Header set Referrer-Policy "strict-origin-when-cross-origin"
     Header set Permissions-Policy "camera=(self), microphone=()"
     Header set Strict-Transport-Security "max-age=31536000; includeSubDomains"
-    Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' https://accounts.google.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://oauth2.googleapis.com https://www.googleapis.com; media-src 'self' blob:; worker-src blob:"
+    Header set Content-Security-Policy "default-src 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval' https://accounts.google.com https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://oauth2.googleapis.com https://www.googleapis.com https://storage.googleapis.com https://cdn.jsdelivr.net; media-src 'self' blob:; worker-src blob:"
 </IfModule>
 
 # Cache static assets

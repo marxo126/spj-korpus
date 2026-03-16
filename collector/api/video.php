@@ -49,16 +49,23 @@ $ext = pathinfo($filename, PATHINFO_EXTENSION);
 $mime = $ext === 'mp4' ? 'video/mp4' : 'video/webm';
 $size = filesize($path);
 
-// Safari REQUIRES Range request support for video playback
+// Safari REQUIRES: Range support, correct Content-Type, no gzip
+if (function_exists('apache_setenv')) {
+    apache_setenv('no-gzip', '1'); // Disable gzip for video — breaks Range
+}
+ini_set('zlib.output_compression', 'Off');
+
 header('Content-Type: ' . $mime);
 header('Accept-Ranges: bytes');
 header('Cache-Control: private, max-age=3600');
+header('Content-Disposition: inline; filename="' . $filename . '"');
 
 if (isset($_SERVER['HTTP_RANGE'])) {
-    // Parse Range header: bytes=START-END
     preg_match('/bytes=(\d+)-(\d*)/', $_SERVER['HTTP_RANGE'], $m);
-    $start = (int) $m[1];
-    $end = $m[2] !== '' ? (int) $m[2] : $size - 1;
+    $start = (int) ($m[1] ?? 0);
+    $end = ($m[2] ?? '') !== '' ? (int) $m[2] : $size - 1;
+    // Clamp end to file size
+    if ($end >= $size) $end = $size - 1;
     if ($start > $end || $start >= $size) {
         http_response_code(416);
         header("Content-Range: bytes */$size");
@@ -70,7 +77,13 @@ if (isset($_SERVER['HTTP_RANGE'])) {
     header("Content-Length: $length");
     $fp = fopen($path, 'rb');
     fseek($fp, $start);
-    echo fread($fp, $length);
+    $remaining = $length;
+    while ($remaining > 0 && !feof($fp)) {
+        $chunk = min(8192, $remaining);
+        echo fread($fp, $chunk);
+        $remaining -= $chunk;
+        flush();
+    }
     fclose($fp);
 } else {
     header('Content-Length: ' . $size);
