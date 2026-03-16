@@ -79,13 +79,13 @@ $source_icons = ['php' => '🐘', 'js' => '⚡', 'api' => '🔗'];
 
 <!-- Filters -->
 <div class="admin-filter" style="margin-bottom:16px;">
-    <select onchange="location.href='/admin/?tab=logs&log_level='+this.value+'&log_source=<?= $filter_source ?>'">
+    <select onchange="location.href='/admin/?tab=logs&log_level='+this.value+'&log_source=<?= urlencode($filter_source) ?>'">
         <option value="all" <?= $filter_level === 'all' ? 'selected' : '' ?>>Všetky úrovne</option>
         <option value="error" <?= $filter_level === 'error' ? 'selected' : '' ?>>🔴 Chyby</option>
         <option value="warning" <?= $filter_level === 'warning' ? 'selected' : '' ?>>🟡 Varovania</option>
         <option value="info" <?= $filter_level === 'info' ? 'selected' : '' ?>>🔵 Info</option>
     </select>
-    <select onchange="location.href='/admin/?tab=logs&log_level=<?= $filter_level ?>&log_source='+this.value">
+    <select onchange="location.href='/admin/?tab=logs&log_level=<?= urlencode($filter_level) ?>&log_source='+this.value">
         <option value="all" <?= $filter_source === 'all' ? 'selected' : '' ?>>Všetky zdroje</option>
         <option value="php" <?= $filter_source === 'php' ? 'selected' : '' ?>>🐘 PHP</option>
         <option value="js" <?= $filter_source === 'js' ? 'selected' : '' ?>>⚡ JavaScript</option>
@@ -145,7 +145,7 @@ $source_icons = ['php' => '🐘', 'js' => '⚡', 'api' => '🔗'];
 <?php if ($total_pages > 1): ?>
 <div style="display:flex;justify-content:center;gap:8px;margin-top:16px;">
     <?php for ($p = 1; $p <= min($total_pages, 20); $p++): ?>
-    <a href="/admin/?tab=logs&log_level=<?= $filter_level ?>&log_source=<?= $filter_source ?>&log_page=<?= $p ?>"
+    <a href="/admin/?tab=logs&log_level=<?= htmlspecialchars($filter_level, ENT_QUOTES) ?>&log_source=<?= htmlspecialchars($filter_source, ENT_QUOTES) ?>&log_page=<?= $p ?>"
        style="padding:6px 12px;border-radius:6px;font-size:14px;text-decoration:none;<?= $p == $page ? 'background:var(--blue);color:white;' : 'background:var(--light-gray);color:var(--dark);' ?>">
         <?= $p ?>
     </a>
