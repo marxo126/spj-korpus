@@ -11,10 +11,12 @@
             <span class="icon">⏺</span>
             <span>Nahrať</span>
         </a>
+        <?php if (is_researcher()): ?>
         <a href="/validate.php" class="nav-item <?= $current_page === 'validate' ? 'active' : '' ?>">
             <span class="icon">✓</span>
             <span>Overiť</span>
         </a>
+        <?php endif; ?>
         <a href="/progress.php" class="nav-item <?= $current_page === 'progress' ? 'active' : '' ?>">
             <span class="icon">👤</span>
             <span>Profil</span>
@@ -42,6 +44,29 @@
     if (!localStorage.getItem('cookie_consent')) {
         document.getElementById('cookie-banner').style.display = 'block';
     }
+    </script>
+
+    <!-- JS error reporter -->
+    <script>
+    (function(){
+        function reportError(msg, filename, lineno, colno, stack) {
+            try {
+                fetch('/api/log-error.php', {
+                    method: 'POST',
+                    headers: {'Content-Type':'application/json'},
+                    body: JSON.stringify({message:msg, level:'error', url:location.href, filename:filename, lineno:lineno, colno:colno, stack:stack})
+                }).catch(function(){});
+            } catch(e) {}
+        }
+        window.onerror = function(msg, src, line, col, err) {
+            reportError(msg, src, line, col, err && err.stack ? err.stack : '');
+        };
+        window.addEventListener('unhandledrejection', function(e) {
+            var msg = e.reason ? (e.reason.message || String(e.reason)) : 'Unhandled promise rejection';
+            var stack = e.reason && e.reason.stack ? e.reason.stack : '';
+            reportError(msg, '', 0, 0, stack);
+        });
+    })();
     </script>
 
     <!-- Legal links -->

@@ -26,10 +26,9 @@ define('MIN_VIDEO_DURATION_MS', 1000);       // 1 second
 define('DAILY_GOAL', 20);
 define('TARGET_RECORDINGS_PER_SIGN', 50);
 
-// Validation
+// Validation (researcher voting: 3 up = approve, 2 down = reject)
 define('VOTES_TO_APPROVE', 3);
-define('VOTES_TO_REJECT', 3);
-define('MIN_RECORDINGS_TO_VALIDATE', 20);
+define('VOTES_TO_REJECT', 2);
 
 // Storage monitoring
 define('STORAGE_LIMIT_GB', 18); // leaves 2 GB headroom for app files and DB
@@ -49,3 +48,6 @@ if (session_status() === PHP_SESSION_NONE) {
     ini_set('session.cookie_secure', isset($_SERVER['HTTPS']) ? 1 : 0);
     ini_set('session.use_strict_mode', 1);
 }
+
+// Error logging to DB (must be after DB config is loaded)
+require_once __DIR__ . '/error_logger.php';
