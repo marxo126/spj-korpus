@@ -21,6 +21,12 @@
             <span class="icon">👤</span>
             <span>Profil</span>
         </a>
+        <?php if ($user && (!empty($user['is_admin']) || !empty($user['is_researcher']))): ?>
+        <a href="/admin/" class="nav-item <?= $current_page === 'index' && str_contains($_SERVER['REQUEST_URI'], '/admin/') ? 'active' : '' ?>" style="color: #FBBF24;">
+            <span class="icon">⚙️</span>
+            <span>Admin</span>
+        </a>
+        <?php endif; ?>
     </nav>
     <?php endif; ?>
 
