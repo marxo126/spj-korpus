@@ -1,0 +1,203 @@
+"""WCAG 1.4.10 / 2.5.8 — Layout and target size rules."""
+from __future__ import annotations
+
+import re
+
+from rules.base import BaseRule, Finding, Severity
+from rules.helpers import iter_elements
+
+_PX_RE = re.compile(r"^([\d.]+)\s*px$", re.I)
+_INTERACTIVE_TAGS = frozenset(("button", "a", "input", "select", "textarea"))
+
+
+class LayoutRule(BaseRule):
+    id = "layout"
+    name = "Layout & Target Size"
+    wcag_criteria = ("1.4.10", "2.5.8")
+    standards = ("WCAG 2.2 AA",)
+
+    def check(self, ctx, config) -> list[Finding]:
+        findings: list[Finding] = []
+        thresholds = config.get("thresholds", {})
+        target_aa = thresholds.get("target_size_aa", 24)
+        target_enh = thresholds.get("target_size_enhanced", 44)
+
+        # viewport-meta
+        for path, fc, elem in iter_elements(ctx):
+            if elem.tag == "meta":
+                name = str(elem.attributes.get("name", "")).lower()
+                if name == "viewport":
+                    content = str(elem.attributes.get("content", ""))
+                    findings.extend(self._check_viewport(content, path, elem.line))
+
+        # CSS-based checks
+        css = ctx.css
+        for rule in css.rules:
+            props = rule.properties
+            sel = rule.selector.lower()
+
+            # target-size checks on interactive selectors
+            if self._is_interactive_selector(sel):
+                self._check_target_size(
+                    rule, props, findings, target_aa, target_enh,
+                )
+
+            # spacing
+            if self._is_interactive_selector(sel):
+                margin = props.get("margin")
+                gap = props.get("gap")
+                if not margin and not gap:
+                    # Only flag if there's explicit sizing but no spacing
+                    if props.get("padding") or props.get("min-height"):
+                        findings.append(self._finding(
+                            check_id="spacing",
+                            severity=Severity.MODERATE,
+                            wcag="2.5.8",
+                            wcag_name="Target Size (Minimum)",
+                            message=f"No margin/gap between interactive elements — {rule.selector}",
+                            file="style.css",
+                            line=rule.line,
+                            element=rule.selector,
+                            fix="Add margin or gap to ensure adequate spacing between targets",
+                            impact=("motor",),
+                        ))
+
+            # reflow-320
+            if sel in ("body", "html", ".container", ".wrapper", "main"):
+                ox = props.get("overflow-x", "").lower()
+                if ox == "hidden":
+                    findings.append(self._finding(
+                        check_id="reflow-320",
+                        severity=Severity.SERIOUS,
+                        wcag="1.4.10",
+                        wcag_name="Reflow",
+                        message=f"overflow-x: hidden on {rule.selector} may break 320px reflow",
+                        file="style.css",
+                        line=rule.line,
+                        element=rule.selector,
+                        fix="Remove overflow-x: hidden or use a media query fallback",
+                        impact=("low-vision",),
+                    ))
+                w = props.get("width", "")
+                mw = props.get("min-width", "")
+                for val, prop in ((w, "width"), (mw, "min-width")):
+                    px = _parse_px(val)
+                    if px is not None and px > 320:
+                        findings.append(self._finding(
+                            check_id="reflow-320",
+                            severity=Severity.SERIOUS,
+                            wcag="1.4.10",
+                            wcag_name="Reflow",
+                            message=f"Fixed {prop}: {val} on {rule.selector} exceeds 320px",
+                            file="style.css",
+                            line=rule.line,
+                            element=rule.selector,
+                            fix=f"Use max-width or relative units instead of fixed {prop}",
+                            impact=("low-vision",),
+                        ))
+
+        return findings
+
+    def _check_viewport(self, content: str, path: str, line: int) -> list[Finding]:
+        findings: list[Finding] = []
+        content_lower = content.lower().replace(" ", "")
+        if "user-scalable=no" in content_lower:
+            findings.append(self._finding(
+                check_id="viewport-meta",
+                severity=Severity.SERIOUS,
+                wcag="1.4.4",
+                wcag_name="Resize Text",
+                message="Viewport disables user scaling (user-scalable=no)",
+                file=path,
+                line=line,
+                element='<meta name="viewport">',
+                fix="Remove user-scalable=no to allow pinch-to-zoom",
+                impact=("low-vision", "motor"),
+            ))
+        m = re.search(r"maximum-scale\s*=\s*([\d.]+)", content_lower)
+        if m:
+            scale = float(m.group(1))
+            if scale < 2:
+                findings.append(self._finding(
+                    check_id="viewport-meta",
+                    severity=Severity.SERIOUS,
+                    wcag="1.4.4",
+                    wcag_name="Resize Text",
+                    message=f"Viewport maximum-scale={scale} restricts zoom below 2x",
+                    file=path,
+                    line=line,
+                    element='<meta name="viewport">',
+                    fix="Set maximum-scale to at least 2 or remove the restriction",
+                    impact=("low-vision", "motor"),
+                ))
+        return findings
+
+    def _check_target_size(self, rule, props, findings, target_aa, target_enh):
+        min_h = _parse_px(props.get("min-height", ""))
+        min_w = _parse_px(props.get("min-width", ""))
+        height = _parse_px(props.get("height", ""))
+        width = _parse_px(props.get("width", ""))
+
+        size = min(
+            min_h or height or 999,
+            min_w or width or 999,
+        )
+        if size == 999:
+            # Check padding as proxy
+            p = props.get("padding", "")
+            px = _parse_px(p)
+            if px is not None and px < 8:
+                findings.append(self._finding(
+                    check_id="target-size-aa",
+                    severity=Severity.SERIOUS,
+                    wcag="2.5.8",
+                    wcag_name="Target Size (Minimum)",
+                    message=f"Small padding ({p}) may make target too small — {rule.selector}",
+                    file="style.css",
+                    line=rule.line,
+                    element=rule.selector,
+                    fix=f"Ensure interactive target is at least {target_aa}px",
+                    impact=("motor",),
+                ))
+            return
+
+        if size < target_aa:
+            findings.append(self._finding(
+                check_id="target-size-aa",
+                severity=Severity.SERIOUS,
+                wcag="2.5.8",
+                wcag_name="Target Size (Minimum)",
+                message=f"Target size {size}px below {target_aa}px — {rule.selector}",
+                file="style.css",
+                line=rule.line,
+                element=rule.selector,
+                fix=f"Set min-height/min-width to at least {target_aa}px",
+                impact=("motor",),
+            ))
+        elif size < target_enh:
+            findings.append(self._finding(
+                check_id="target-size-enhanced",
+                severity=Severity.MINOR,
+                wcag="2.5.8",
+                wcag_name="Target Size (Minimum)",
+                message=f"Target size {size}px below enhanced {target_enh}px — {rule.selector}",
+                file="style.css",
+                line=rule.line,
+                element=rule.selector,
+                fix=f"Consider increasing to {target_enh}px for enhanced accessibility",
+                impact=("motor",),
+            ))
+
+    @staticmethod
+    def _is_interactive_selector(sel: str) -> bool:
+        for tag in _INTERACTIVE_TAGS:
+            if tag in sel:
+                return True
+        return ".btn" in sel or "[type=" in sel
+
+
+def _parse_px(value: str | None) -> float | None:
+    if not value:
+        return None
+    m = _PX_RE.match(value.strip())
+    return float(m.group(1)) if m else None
