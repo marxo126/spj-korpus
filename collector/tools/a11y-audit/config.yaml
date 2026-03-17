@@ -99,6 +99,23 @@ suppressions:
   - rule: "focus"
     check: "focus-trap"
     reason: "Framing guide modal has focus management + Escape handler in framingGuide.js"
+  # Card/section layouts that are not semantic lists
+  - rule: "structure"
+    check: "list-structure"
+    file: "accessibility-statement.php"
+    reason: "Feature cards are a layout grid, not a semantic list"
+  - rule: "structure"
+    check: "list-structure"
+    file: "admin/index.php"
+    reason: "Admin dashboard cards are a layout grid"
+  - rule: "structure"
+    check: "list-structure"
+    file: "index.php"
+    reason: "Login/register form sections are not a list"
+  - rule: "structure"
+    check: "list-structure"
+    file: "terms.php"
+    reason: "Terms sections are content blocks, not a list"
 
 reports:
   output_dir: "tools/a11y-audit/reports"
