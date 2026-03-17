@@ -1,0 +1,74 @@
+project:
+  name: "SPJ Collector (zber.spj.sk)"
+  root: "../.."
+  directories:
+    pages: "."
+    admin: "admin"
+    includes: "includes"
+    api: "api"
+  css_file: "css/style.css"
+  js_dir: "js"
+
+standards:
+  wcag: "2.2"
+  conformance: "AA"
+  en_301_549: true
+
+severity:
+  critical: error
+  serious: error
+  moderate: error
+  minor: error
+
+thresholds:
+  contrast_text: 4.5
+  contrast_large: 3.0
+  contrast_ui: 3.0
+  target_size_aa: 24
+  target_size_enhanced: 44
+  min_font_size: 14
+  min_line_height: 1.5
+  max_line_length: 80
+  animation_flash_hz: 3
+  toast_min_ms: 5000
+
+modules:
+  contrast: true
+  color: true
+  typography: true
+  layout: true
+  structure: true
+  aria: true
+  focus: true
+  keyboard: true
+  interactive: true
+  forms: true
+  media: true
+  language: true
+  motion: true
+  cognitive: true
+  compliance: true
+  collector: true
+
+include:
+  - "*.php"
+  - "js/*.js"
+  - "css/*.css"
+  - "admin/**/*.php"
+  - "admin/api/**/*.php"
+  - "api/**/*.php"
+  - "includes/**/*.php"
+
+exclude:
+  - "uploads/**"
+  - "tools/**"
+  - ".git/**"
+  - "sql/**"
+  - "img/**"
+
+suppressions: []
+
+reports:
+  output_dir: "tools/a11y-audit/reports"
+  formats: [terminal, json, html]
+  keep_history: 10
