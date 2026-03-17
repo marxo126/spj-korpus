@@ -24,7 +24,7 @@ _KEYFRAMES_RE = re.compile(
 )
 
 # animation or animation-duration property
-_ANIM_DURATION_RE = re.compile(r"([\d.]+)(ms|s)")
+_ANIM_DURATION_RE = re.compile(r"(\d+\.?\d*|\.\d+)(ms|s)\b")
 _ANIM_ITERATION_RE = re.compile(r"animation-iteration-count\s*:\s*([^;]+);")
 _ANIM_SHORTHAND_RE = re.compile(r"animation\s*:[^;]*\b(infinite)\b")
 
@@ -115,10 +115,13 @@ def _extract_keyframes(content: str) -> list[KeyframeAnimation]:
         duration_ms = None
         dur_match = _ANIM_DURATION_RE.search(content)
         if dur_match:
-            val = float(dur_match.group(1))
-            if dur_match.group(2) == "s":
-                val *= 1000
-            duration_ms = val
+            try:
+                val = float(dur_match.group(1))
+                if dur_match.group(2) == "s":
+                    val *= 1000
+                duration_ms = val
+            except ValueError:
+                pass
 
         # Detect iteration count
         iteration = "1"
