@@ -124,23 +124,6 @@ def _css_var_index(css_ctx: CSSContext) -> dict:
     return css_ctx._var_index  # type: ignore[attr-defined]
 
 
-def resolve_css_value(value: str, css_ctx: CSSContext, mode: str = "light") -> str | None:
-    """Resolve a CSS value that may contain var(--name) or var(--name, fallback)."""
-    if not value:
-        return None
-    value = value.strip()
-    if value.startswith("var("):
-        inner = value[4:].rstrip(")")
-        parts = inner.split(",", 1)
-        name = parts[0].strip()
-        resolved = resolve_css_var(name, css_ctx, mode)
-        if resolved:
-            return resolved
-        if len(parts) > 1:
-            return parts[1].strip()
-        return None
-    return value
-
 
 # ── Iteration helpers ───────────────────────────────────────────────────
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from rules.base import BaseRule, Finding, Severity
-from rules.helpers import iter_elements, iter_files, has_accessible_name
+from rules.helpers import iter_elements, iter_files, has_accessible_name, line_of
 from parsers.models import PHP_EXTENSIONS
 
 _INPUT_TYPES_SKIP = frozenset(("hidden", "submit", "button", "image", "reset"))
@@ -288,7 +288,7 @@ class FormsRule(BaseRule):
             content = fc.content
             for m in _CAPTCHA_PATTERN.finditer(content):
                 # Find line number
-                line_num = content[:m.start()].count("\n") + 1
+                line_num = line_of(content, m.start())
                 findings.append(self._finding(
                     check_id="accessible-auth",
                     severity=Severity.SERIOUS,

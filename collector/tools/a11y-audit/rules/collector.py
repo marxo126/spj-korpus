@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import re
+from typing import Iterator
 
 from rules.base import BaseRule, Finding, Severity
-from rules.helpers import iter_elements, iter_files, has_accessible_name
-from parsers.models import JS_EXTENSIONS, PHP_EXTENSIONS
+from rules.helpers import iter_elements, iter_files, has_accessible_name, ARIA_LIVE_ROLES
+from parsers.models import ElementNode, JS_EXTENSIONS, PHP_EXTENSIONS
 
 _CAMERA_PATTERN = re.compile(r"\b(getUserMedia|navigator\.mediaDevices)\b")
 _CAMERA_ERROR = re.compile(r"\b(catch|onerror|NotAllowedError|NotFoundError|permission)\b", re.IGNORECASE)
@@ -16,6 +17,13 @@ _MODAL_CLOSE = re.compile(r"\b(close|dismiss|hide|skry[tť])\b", re.IGNORECASE)
 _FOCUS_RETURN = re.compile(r"\.focus\(\)")
 _RECORDING_CLASSES = re.compile(r"\b(recording|timer|countdown|status)\b", re.IGNORECASE)
 _OFFLINE_PATTERN = re.compile(r"\b(offline|retry|sync|navigator\.onLine|reconnect)\b", re.IGNORECASE)
+
+
+def _has_aria_live_or_role(elem: ElementNode, roles: frozenset[str] = ARIA_LIVE_ROLES) -> bool:
+    """Check if element has aria-live attribute or matching role."""
+    aria_live = elem.attributes.get("aria-live")
+    role = str(elem.attributes.get("role", "")).lower()
+    return bool(aria_live) or role in roles
 
 
 class CollectorRule(BaseRule):
@@ -70,10 +78,7 @@ class CollectorRule(BaseRule):
             cls = str(elem.attributes.get("class", ""))
             if not _QUALITY_CLASSES.search(cls):
                 continue
-            # Check if element or ancestor has aria-live
-            aria_live = elem.attributes.get("aria-live")
-            role = str(elem.attributes.get("role", "")).lower()
-            if aria_live or role in ("status", "alert", "log"):
+            if _has_aria_live_or_role(elem):
                 continue
             findings.append(self._finding(
                 check_id="quality-aria-live",
@@ -197,9 +202,7 @@ class CollectorRule(BaseRule):
             # Skip generic status classes that aren't recording-specific
             if "recording" not in combined.lower() and "timer" not in combined.lower():
                 continue
-            aria_live = elem.attributes.get("aria-live")
-            role = str(elem.attributes.get("role", "")).lower()
-            if aria_live or role in ("status", "timer", "alert"):
+            if _has_aria_live_or_role(elem, ARIA_LIVE_ROLES | {"timer"}):
                 continue
             findings.append(self._finding(
                 check_id="recording-status",
@@ -224,9 +227,7 @@ class CollectorRule(BaseRule):
             combined = (cls + " " + elem_id).lower()
             if "timer" not in combined and "countdown" not in combined:
                 continue
-            role = str(elem.attributes.get("role", "")).lower()
-            aria_live = elem.attributes.get("aria-live")
-            if role == "timer" or aria_live:
+            if _has_aria_live_or_role(elem, ARIA_LIVE_ROLES | {"timer"}):
                 continue
             findings.append(self._finding(
                 check_id="timer-accessible",
@@ -320,7 +321,7 @@ class CollectorRule(BaseRule):
         return findings
 
 
-def _walk(elem):
+def _walk(elem: ElementNode) -> Iterator[ElementNode]:
     """Walk all descendants of an element."""
     for child in elem.children:
         yield child

@@ -16,6 +16,14 @@ _DATE_PATTERN = re.compile(
 _EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
 _URL_PATTERN = re.compile(r"https?://[^\s\"'<>]+")
 
+_CONFORMANCE_KEYWORDS = ["conformance", "conformita", "zhoda", "čiastočn", "úpln"]
+_NON_ACCESSIBLE_KEYWORDS = ["nedostupn", "obmedzeni", "limitation", "issue", "problém"]
+_REVIEW_KEYWORDS = ["hodnoteni", "posúdeni", "self-assessment", "audit", "test"]
+_CONTACT_KEYWORDS = ["kontakt", "contact", "email", "spätná väzba", "feedback"]
+_ENFORCEMENT_KEYWORDS = ["dozor", "enforcement", "orgán", "komisár"]
+_SCOPE_KEYWORDS = ["rozsah", "scope", "stránk", "page", "funkcionalit"]
+_STANDARDS_KEYWORDS = ["wcag", "en 301 549", "smernic", "directive"]
+
 
 class ComplianceRule(BaseRule):
     id = "compliance"
@@ -61,8 +69,7 @@ class ComplianceRule(BaseRule):
         return any(k in content for k in keywords)
 
     def _check_conformance_status(self, path: str, content: str) -> list[Finding]:
-        keywords = ["conformance", "conformita", "zhoda", "čiastočn", "úpln"]
-        if self._has_keywords(content, keywords):
+        if self._has_keywords(content, _CONFORMANCE_KEYWORDS):
             return []
         return [self._finding(
             check_id="conformance-status",
@@ -76,8 +83,7 @@ class ComplianceRule(BaseRule):
         )]
 
     def _check_non_accessible(self, path: str, content: str) -> list[Finding]:
-        keywords = ["nedostupn", "obmedzeni", "limitation", "issue", "problém"]
-        if self._has_keywords(content, keywords):
+        if self._has_keywords(content, _NON_ACCESSIBLE_KEYWORDS):
             return []
         return [self._finding(
             check_id="non-accessible-content",
@@ -105,8 +111,7 @@ class ComplianceRule(BaseRule):
         )]
 
     def _check_review_method(self, path: str, content: str) -> list[Finding]:
-        keywords = ["hodnoteni", "posúdeni", "self-assessment", "audit", "test"]
-        if self._has_keywords(content, keywords):
+        if self._has_keywords(content, _REVIEW_KEYWORDS):
             return []
         return [self._finding(
             check_id="review-method",
@@ -120,8 +125,7 @@ class ComplianceRule(BaseRule):
         )]
 
     def _check_feedback(self, path: str, content: str) -> list[Finding]:
-        contact_keywords = ["kontakt", "contact", "email", "spätná väzba", "feedback"]
-        has_contact = self._has_keywords(content, contact_keywords)
+        has_contact = self._has_keywords(content, _CONTACT_KEYWORDS)
         has_email = bool(_EMAIL_PATTERN.search(content))
         if has_contact and has_email:
             return []
@@ -137,8 +141,7 @@ class ComplianceRule(BaseRule):
         )]
 
     def _check_enforcement(self, path: str, content: str) -> list[Finding]:
-        keywords = ["dozor", "enforcement", "orgán", "komisár"]
-        has_keywords = self._has_keywords(content, keywords)
+        has_keywords = self._has_keywords(content, _ENFORCEMENT_KEYWORDS)
         has_url = bool(_URL_PATTERN.search(content))
         if has_keywords or has_url:
             return []
@@ -154,8 +157,7 @@ class ComplianceRule(BaseRule):
         )]
 
     def _check_scope(self, path: str, content: str) -> list[Finding]:
-        keywords = ["rozsah", "scope", "stránk", "page", "funkcionalit"]
-        if self._has_keywords(content, keywords):
+        if self._has_keywords(content, _SCOPE_KEYWORDS):
             return []
         return [self._finding(
             check_id="scope-defined",
@@ -169,8 +171,7 @@ class ComplianceRule(BaseRule):
         )]
 
     def _check_standards_ref(self, path: str, content: str) -> list[Finding]:
-        keywords = ["wcag", "en 301 549", "smernic", "directive"]
-        if self._has_keywords(content, keywords):
+        if self._has_keywords(content, _STANDARDS_KEYWORDS):
             return []
         return [self._finding(
             check_id="standards-reference",

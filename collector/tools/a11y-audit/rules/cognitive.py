@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from rules.base import BaseRule, Finding, Severity
-from rules.helpers import iter_elements, iter_files
+from rules.helpers import iter_elements, iter_files, line_of
 from parsers.models import PHP_EXTENSIONS, JS_EXTENSIONS
 
 _SESSION_TIMEOUT_RE = re.compile(
@@ -67,7 +67,7 @@ class CognitiveRule(BaseRule):
                     ms = int(num_str)
                     # If it looks like milliseconds and < 20 min
                     if 1000 < ms < 1_200_000:
-                        line_num = content[:m.start()].count("\n") + 1
+                        line_num = line_of(content, m.start())
                         findings.append(self._finding(
                             check_id="session-timeout",
                             severity=Severity.SERIOUS,
