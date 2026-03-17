@@ -234,6 +234,16 @@ function updateQualityStatus(status) {
         banner.textContent = '✅ Pripravené na nahrávanie';
     }
 
+    // Update aria-label on status container with current quality summary
+    const statusContainer = document.getElementById('status-badges');
+    if (statusContainer) {
+        const parts = [];
+        parts.push(status.hands ? 'Ruky viditeľné' : 'Ruky nie sú viditeľné');
+        parts.push(status.face ? 'Tvár viditeľná' : (status.faceWarning || 'Tvár nie je viditeľná'));
+        parts.push(status.light === 'ok' ? 'Svetlo v poriadku' : (status.light === 'dark' ? 'Príliš tmavo' : 'Príliš svetlo'));
+        statusContainer.setAttribute('aria-label', parts.join(', '));
+    }
+
     // Label
     const label = document.getElementById('record-label');
     if (!label.dataset.autoCountdown) {
@@ -313,6 +323,10 @@ function beginRecording() {
     isRecording = true;
     recordedChunks = [];
 
+    // Announce recording start to screen readers
+    const announce = document.getElementById('recording-announce');
+    if (announce) announce.textContent = 'Nahrávanie začalo';
+
     const mimeTypes = [
         'video/mp4;codecs=avc1',
         'video/webm;codecs=vp9',
@@ -358,6 +372,10 @@ function stopRecording() {
     if (mediaRecorder && mediaRecorder.state === 'recording') {
         mediaRecorder.stop();
     }
+
+    // Announce recording stop to screen readers
+    const announce = document.getElementById('recording-announce');
+    if (announce) announce.textContent = 'Nahrávanie ukončené';
 }
 
 async function onRecordingDone() {
@@ -474,6 +492,10 @@ async function submitRecording() {
     const submitBtn = document.getElementById('submit-btn');
     submitBtn.textContent = '⏳ Odosielam...';
     submitBtn.disabled = true;
+
+    // Announce upload to screen readers
+    const announce = document.getElementById('recording-announce');
+    if (announce) announce.textContent = 'Odosielanie videa';
 
     try {
         const formData = new FormData();

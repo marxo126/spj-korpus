@@ -23,6 +23,10 @@ const OfflineStore = {
     },
 
     async save(blob, signId, durationMs) {
+        // Announce offline save to screen readers
+        const announce = document.getElementById('recording-announce') || document.querySelector('[aria-live]');
+        if (announce) announce.textContent = 'Offline režim — nahrávka bude odoslaná neskôr';
+
         const db = await this.getDB();
         return new Promise((resolve, reject) => {
             const tx = db.transaction(this.STORE_NAME, 'readwrite');

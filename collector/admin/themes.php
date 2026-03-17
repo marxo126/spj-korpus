@@ -41,11 +41,11 @@ $themes = $pdo->query("
 <table class="admin-table">
     <thead>
         <tr>
-            <th>#</th>
-            <th>Emoji</th>
-            <th>Názov</th>
-            <th>Slov</th>
-            <th>Akcie</th>
+            <th scope="col">#</th>
+            <th scope="col">Emoji</th>
+            <th scope="col">Názov</th>
+            <th scope="col">Slov</th>
+            <th scope="col">Akcie</th>
         </tr>
     </thead>
     <tbody>

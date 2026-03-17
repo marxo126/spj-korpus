@@ -73,7 +73,7 @@ require_once __DIR__ . '/includes/header.php';
 
         <!-- Camera preview (shown during recording) -->
         <div class="camera-container border-green" id="camera-container" style="display: none;">
-            <video id="camera-preview" autoplay playsinline muted></video>
+            <video id="camera-preview" autoplay playsinline muted aria-label="Náhľad kamery"></video>
             <div class="camera-banner ok" id="camera-banner">✅ Pripravené na nahrávanie</div>
             <button class="help-btn" onclick="FramingGuide.showHelp()" title="Návod" aria-label="Návod na nahrávanie">?</button>
             <div class="countdown-overlay" id="countdown-overlay" style="display: none;">
@@ -81,13 +81,13 @@ require_once __DIR__ . '/includes/header.php';
             </div>
             <div class="recording-indicator" id="recording-indicator" style="display: none;">
                 <div class="rec-dot"></div>
-                <span id="recording-timer">0:00 / 0:05</span>
+                <span id="recording-timer" role="timer" aria-live="off" aria-label="Čas nahrávania">0:00 / 0:05</span>
             </div>
         </div>
 
         <!-- Video preview (shown after recording) -->
         <video class="video-preview" id="video-preview" style="display: none;"
-               controls autoplay playsinline loop></video>
+               controls autoplay muted playsinline loop aria-label="Nahrané video na schválenie"></video>
 
         <!-- Quality gate results -->
         <div id="quality-gate-container" style="display: none;"></div>
@@ -155,6 +155,9 @@ require_once __DIR__ . '/includes/header.php';
         </div>
     </div>
 </div>
+
+<!-- Screen reader announcements for recording state -->
+<div id="recording-announce" aria-live="assertive" class="sr-only" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;"></div>
 
 <!-- Upload toast -->
 <div class="toast success" id="toast" style="display: none;"></div>

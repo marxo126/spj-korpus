@@ -36,11 +36,11 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
 ?>
 
 <?php if (isset($_GET['success']) && $_GET['success'] === 'imported'): ?>
-<div style="background:#DCFCE7;color:#15803D;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;">
-    Importovaných: <?= (int)($_GET['count'] ?? 0) ?> slov<?php if (($_GET['skipped'] ?? 0) > 0): ?>, preskočených: <?= (int)$_GET['skipped'] ?><?php endif; ?>
+<div role="alert" style="background:#DCFCE7;color:#15803D;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;">
+    ✅ Importovaných: <?= (int)($_GET['count'] ?? 0) ?> slov<?php if (($_GET['skipped'] ?? 0) > 0): ?>, preskočených: <?= (int)$_GET['skipped'] ?><?php endif; ?>
 </div>
 <?php elseif (isset($_GET['error'])): ?>
-<div style="background:#FEE2E2;color:#DC2626;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;">
+<div role="alert" style="background:#FEE2E2;color:#DC2626;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;">
     <?php
     $errors = [
         'no_file' => 'Žiadny súbor.',
@@ -50,7 +50,7 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
         'bad_header' => 'CSV musí obsahovať stĺpec "word_sk".',
         'not_found' => 'Slovo nebolo nájdené.',
     ];
-    echo htmlspecialchars($errors[$_GET['error']] ?? 'Neznáma chyba.');
+    echo '✗ ' . htmlspecialchars($errors[$_GET['error']] ?? 'Neznáma chyba.');
     ?>
 </div>
 <?php endif; ?>
@@ -102,7 +102,7 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
         <p style="font-size:13px;color:var(--gray);margin-bottom:8px;">
             Formát: gloss_id, word_sk, theme_name, link_posunky, link_dictio (max 500 riadkov)
         </p>
-        <input type="file" name="csv_file" accept=".csv" required style="margin-bottom:10px;">
+        <input type="file" name="csv_file" accept=".csv" required aria-label="CSV súbor na import" style="margin-bottom:10px;">
         <button type="submit" class="btn btn-gray" style="width:auto;padding:10px 24px;">Importovať</button>
     </form>
 </details>
@@ -110,7 +110,7 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
 <!-- Filters -->
 <div class="admin-filter">
     <div class="form-group">
-        <select onchange="location.href='/admin/?tab=words&theme_filter='+this.value+'&search=<?= urlencode($filter_search) ?>'">
+        <select aria-label="Filtrovať podľa témy" onchange="location.href='/admin/?tab=words&theme_filter='+this.value+'&search=<?= urlencode($filter_search) ?>'">
             <option value="0">Všetky témy</option>
             <?php foreach ($themes as $t): ?>
             <option value="<?= $t['id'] ?>" <?= $filter_theme == $t['id'] ? 'selected' : '' ?>>
@@ -120,7 +120,7 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
         </select>
     </div>
     <div class="form-group">
-        <input type="text" placeholder="Hľadať..." value="<?= htmlspecialchars($filter_search) ?>"
+        <input type="text" placeholder="Hľadať..." aria-label="Hľadať slovo" value="<?= htmlspecialchars($filter_search) ?>"
                onchange="location.href='/admin/?tab=words&theme_filter=<?= $filter_theme ?>&search='+encodeURIComponent(this.value)">
     </div>
     <span style="font-size:13px;color:var(--gray);"><?= count($signs) ?> slov</span>
@@ -131,12 +131,12 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
 <table class="admin-table">
     <thead>
         <tr>
-            <th>Slovo</th>
-            <th>Gloss</th>
-            <th>Téma</th>
-            <th>Nahrávky</th>
-            <th>Linky</th>
-            <th>Akcie</th>
+            <th scope="col">Slovo</th>
+            <th scope="col">Gloss</th>
+            <th scope="col">Téma</th>
+            <th scope="col">Nahrávky</th>
+            <th scope="col">Linky</th>
+            <th scope="col">Akcie</th>
         </tr>
     </thead>
     <tbody>

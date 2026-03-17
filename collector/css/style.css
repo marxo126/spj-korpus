@@ -625,10 +625,10 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
 }
 .help-btn {
     position: absolute;
-    top: 12px;
-    left: 12px;
-    width: 32px;
-    height: 32px;
+    top: 8px;
+    left: 8px;
+    width: 44px;
+    height: 44px;
     border-radius: 50%;
     background: rgba(255,255,255,0.2);
     border: none;
@@ -991,6 +991,8 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
     font-size: 1.25rem;
     cursor: pointer;
     padding: 4px 8px;
+    min-width: 44px;
+    min-height: 44px;
     line-height: 1;
     border-radius: 6px;
 }

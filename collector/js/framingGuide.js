@@ -107,12 +107,24 @@ const FramingGuide = {
 
         document.body.appendChild(card);
         this._cardEl = card;
+        this._cardTrigger = document.activeElement;
 
-        document.getElementById('framing-card-dismiss').addEventListener('click', () => {
+        const dismissBtn = document.getElementById('framing-card-dismiss');
+        const dismissHandler = () => {
             localStorage.setItem('framing_guide_seen', '1');
             card.remove();
             this._cardEl = null;
+            // Return focus to the element that opened the card
+            if (this._cardTrigger) { this._cardTrigger.focus(); this._cardTrigger = null; }
             if (onDismiss) onDismiss();
+        };
+
+        dismissBtn.addEventListener('click', dismissHandler);
+        dismissBtn.focus();
+
+        // Close on Escape
+        card.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') { e.preventDefault(); dismissHandler(); }
         });
     },
 

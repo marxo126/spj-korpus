@@ -133,7 +133,7 @@ $top_users = $pdo->query("
 <h3 style="margin:20px 0 8px;">Top prispievatelia</h3>
 <table class="admin-table">
     <thead>
-        <tr><th>#</th><th>Meno</th><th>Nahrávok</th></tr>
+        <tr><th scope="col">#</th><th scope="col">Meno</th><th scope="col">Nahrávok</th></tr>
     </thead>
     <tbody>
         <?php foreach ($top_users as $i => $u): ?>

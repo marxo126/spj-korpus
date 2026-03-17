@@ -56,7 +56,7 @@ $counts = $pdo->query("
 ?>
 
 <?php if (isset($msg_map[$msg])): ?>
-<div style="background:<?= $msg_map[$msg][1] ?>;color:<?= $msg_map[$msg][2] ?>;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;">
+<div role="alert" style="background:<?= $msg_map[$msg][1] ?>;color:<?= $msg_map[$msg][2] ?>;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;">
     <?= $msg_map[$msg][0] ?>
 </div>
 <?php endif; ?>
@@ -83,13 +83,13 @@ $counts = $pdo->query("
 
 <!-- Filters -->
 <div class="admin-filter" style="margin-bottom:16px;">
-    <select onchange="location.href='/admin/?tab=users&role='+this.value+'&q=<?= urlencode($filter_search) ?>'">
+    <select aria-label="Filtrovať podľa role" onchange="location.href='/admin/?tab=users&role='+this.value+'&q=<?= urlencode($filter_search) ?>'">
         <option value="all" <?= $filter_role === 'all' ? 'selected' : '' ?>>Všetci</option>
         <option value="admin" <?= $filter_role === 'admin' ? 'selected' : '' ?>>Admini</option>
         <option value="researcher" <?= $filter_role === 'researcher' ? 'selected' : '' ?>>Výskumníci</option>
         <option value="user" <?= $filter_role === 'user' ? 'selected' : '' ?>>Používatelia</option>
     </select>
-    <input type="text" placeholder="Hľadať email alebo meno..." value="<?= htmlspecialchars($filter_search) ?>"
+    <input type="text" placeholder="Hľadať email alebo meno..." aria-label="Hľadať používateľa" value="<?= htmlspecialchars($filter_search) ?>"
            onchange="location.href='/admin/?tab=users&role=<?= $filter_role ?>&q='+encodeURIComponent(this.value)"
            style="padding:8px 12px;border:2px solid var(--light-gray);border-radius:8px;font-size:14px;flex:1;min-width:200px;">
     <span style="font-size:13px;color:var(--gray);"><?= count($users) ?> používateľov</span>
@@ -100,14 +100,14 @@ $counts = $pdo->query("
 <table class="admin-table" style="width:100%;border-collapse:collapse;font-size:14px;">
 <thead>
 <tr style="border-bottom:2px solid var(--light-gray);text-align:left;">
-    <th style="padding:10px 8px;">Meno</th>
-    <th style="padding:10px 8px;">Email</th>
-    <th style="padding:10px 8px;">Rola</th>
-    <th style="padding:10px 8px;">Nahrávky</th>
-    <th style="padding:10px 8px;">Súhlasy</th>
-    <th style="padding:10px 8px;">Registrácia</th>
-    <th style="padding:10px 8px;">Posledná aktivita</th>
-    <th style="padding:10px 8px;">Akcie</th>
+    <th scope="col" style="padding:10px 8px;">Meno</th>
+    <th scope="col" style="padding:10px 8px;">Email</th>
+    <th scope="col" style="padding:10px 8px;">Rola</th>
+    <th scope="col" style="padding:10px 8px;">Nahrávky</th>
+    <th scope="col" style="padding:10px 8px;">Súhlasy</th>
+    <th scope="col" style="padding:10px 8px;">Registrácia</th>
+    <th scope="col" style="padding:10px 8px;">Posledná aktivita</th>
+    <th scope="col" style="padding:10px 8px;">Akcie</th>
 </tr>
 </thead>
 <tbody>
@@ -139,11 +139,12 @@ $counts = $pdo->query("
         <form method="POST" action="/admin/api/users.php" style="display:inline;">
             <?= csrf_field() ?>
             <input type="hidden" name="user_id" value="<?= $u['id'] ?>">
-            <select name="role" onchange="this.form.submit()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--light-gray);font-size:13px;cursor:pointer;">
+            <select name="role" aria-label="Zmeniť rolu používateľa <?= htmlspecialchars($u['email']) ?>" onchange="this.form.submit()" style="padding:4px 8px;border-radius:6px;border:1px solid var(--light-gray);font-size:13px;cursor:pointer;">
                 <option value="user" <?= $role === 'user' ? 'selected' : '' ?>>Používateľ</option>
                 <option value="researcher" <?= $role === 'researcher' ? 'selected' : '' ?>>Výskumník</option>
                 <option value="admin" <?= $role === 'admin' ? 'selected' : '' ?>>Admin</option>
             </select>
+            <noscript><button type="submit">Uložiť</button></noscript>
         </form>
         <?php else: ?>
         <span style="font-size:12px;color:var(--gray);">—</span>

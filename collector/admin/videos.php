@@ -47,13 +47,13 @@ $total_pages = ceil($total / $per_page);
 
 <!-- Filters -->
 <div class="admin-filter">
-    <select onchange="location.href='/admin/?tab=videos&status='+this.value+'&vtheme=<?= $filter_theme ?>'">
+    <select aria-label="Filtrovať podľa stavu" onchange="location.href='/admin/?tab=videos&status='+this.value+'&vtheme=<?= $filter_theme ?>'">
         <option value="pending" <?= $filter_status === 'pending' ? 'selected' : '' ?>>Čakajúce</option>
         <option value="approved" <?= $filter_status === 'approved' ? 'selected' : '' ?>>Schválené</option>
         <option value="rejected" <?= $filter_status === 'rejected' ? 'selected' : '' ?>>Zamietnuté</option>
         <option value="all" <?= $filter_status === 'all' ? 'selected' : '' ?>>Všetky</option>
     </select>
-    <select onchange="location.href='/admin/?tab=videos&status=<?= $filter_status ?>&vtheme='+this.value">
+    <select aria-label="Filtrovať podľa témy" onchange="location.href='/admin/?tab=videos&status=<?= $filter_status ?>&vtheme='+this.value">
         <option value="0">Všetky témy</option>
         <?php foreach ($themes as $t): ?>
         <option value="<?= $t['id'] ?>" <?= $filter_theme == $t['id'] ? 'selected' : '' ?>>
@@ -73,10 +73,12 @@ $total_pages = ceil($total / $per_page);
         $status_icon = $status_labels[$r['status']] ?? '?';
     ?>
     <div class="video-card">
-        <div class="video-preview-wrap"
+        <div class="video-preview-wrap" role="button" tabindex="0"
              onclick="openVideoModal('<?= htmlspecialchars($src, ENT_QUOTES) ?>')"
-             onmouseenter="hoverPlay(this)" onmouseleave="hoverPause(this)">
-            <video muted loop playsinline preload="none" data-src="<?= htmlspecialchars($src) ?>"></video>
+             onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openVideoModal('<?= htmlspecialchars($src, ENT_QUOTES) ?>')}"
+             onmouseenter="hoverPlay(this)" onmouseleave="hoverPause(this)"
+             aria-label="Prehrať video posunku <?= htmlspecialchars($r['word_sk']) ?>">
+            <video muted loop playsinline preload="none" data-src="<?= htmlspecialchars($src) ?>" aria-label="Nahrávka posunku <?= htmlspecialchars($r['word_sk']) ?>"></video>
             <span class="video-status-badge"><?= $status_icon ?></span>
             <span class="video-play-btn">▶</span>
         </div>
@@ -132,9 +134,9 @@ $total_pages = ceil($total / $per_page);
 <?php endif; ?>
 
 <!-- Video modal -->
-<div id="video-modal" class="video-modal" style="display:none;" onclick="this.style.display='none'">
-    <button class="close-btn" onclick="document.getElementById('video-modal').style.display='none'">×</button>
-    <video id="modal-video" controls autoplay playsinline style="max-width:90%;max-height:80vh;border-radius:12px;"></video>
+<div id="video-modal" class="video-modal" role="dialog" aria-label="Prehrávanie videa" style="display:none;" onclick="closeVideoModal()">
+    <button class="close-btn" onclick="closeVideoModal()" aria-label="Zavrieť video">×</button>
+    <video id="modal-video" controls autoplay muted playsinline style="max-width:90%;max-height:80vh;border-radius:12px;" aria-label="Prehrávanie nahrávky posunku"></video>
 </div>
 
 <style>
@@ -181,19 +183,32 @@ function hoverPause(wrap) {
 }
 
 // Click opens modal — works in ALL browsers (user gesture = play allowed)
+var _videoModalTrigger = null;
 function openVideoModal(src) {
+    _videoModalTrigger = document.activeElement;
     var modal = document.getElementById('video-modal');
     var video = document.getElementById('modal-video');
     video.src = src;
     modal.style.display = 'flex';
     video.play().catch(function(){});
+    video.focus();
+}
+function closeVideoModal() {
+    var modal = document.getElementById('video-modal');
+    var video = document.getElementById('modal-video');
+    video.pause();
+    video.removeAttribute('src');
+    modal.style.display = 'none';
+    if (_videoModalTrigger) { _videoModalTrigger.focus(); _videoModalTrigger = null; }
 }
 document.getElementById('video-modal').addEventListener('click', function(e) {
     if (e.target === this || e.target.classList.contains('close-btn')) {
-        var video = document.getElementById('modal-video');
-        video.pause();
-        video.removeAttribute('src');
-        this.style.display = 'none';
+        closeVideoModal();
+    }
+});
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape' && document.getElementById('video-modal').style.display !== 'none') {
+        closeVideoModal();
     }
 });
 </script>
