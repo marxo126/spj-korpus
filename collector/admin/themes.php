@@ -22,15 +22,15 @@ $themes = $pdo->query("
         <div class="form-row">
             <div class="form-group">
                 <label>Názov</label>
-                <input type="text" name="name" placeholder="Jedlo a nápoje" required>
+                <input type="text" name="name" placeholder="Jedlo a nápoje" required aria-label="Názov témy">
             </div>
             <div class="form-group" style="max-width:100px;">
                 <label>Emoji</label>
-                <input type="text" name="emoji" placeholder="🍞" maxlength="10">
+                <input type="text" name="emoji" placeholder="🍞" maxlength="10" aria-label="Emoji">
             </div>
             <div class="form-group" style="max-width:100px;">
                 <label>Poradie</label>
-                <input type="number" name="sort_order" value="<?= count($themes) + 1 ?>">
+                <input type="number" name="sort_order" value="<?= count($themes) + 1 ?>" aria-label="Poradie">
             </div>
         </div>
         <button type="submit" class="btn btn-blue" style="width:auto;padding:10px 24px;">Pridať</button>

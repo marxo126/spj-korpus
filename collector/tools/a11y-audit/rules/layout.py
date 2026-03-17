@@ -8,6 +8,10 @@ from rules.helpers import iter_elements
 
 _PX_RE = re.compile(r"^([\d.]+)\s*px$", re.I)
 _INTERACTIVE_TAGS = frozenset(("button", "a", "input", "select", "textarea"))
+_INTERACTIVE_SEL_RE = re.compile(
+    r"(?:^|[\s,>+~])(?:button|a(?=[.#\[:>\s,+~]|$)|input|select|textarea)"
+    r"|\.btn|\[type=",
+)
 
 
 class LayoutRule(BaseRule):
@@ -195,10 +199,9 @@ class LayoutRule(BaseRule):
 
     @staticmethod
     def _is_interactive_selector(sel: str) -> bool:
-        for tag in _INTERACTIVE_TAGS:
-            if tag in sel:
-                return True
-        return ".btn" in sel or "[type=" in sel
+        # Strip CSS comments to avoid false matches (e.g., "a" in "Progress Bar")
+        sel_clean = re.sub(r"/\*.*?\*/", "", sel).strip()
+        return bool(_INTERACTIVE_SEL_RE.search(sel_clean))
 
 
 def _parse_px(value: str | None) -> float | None:

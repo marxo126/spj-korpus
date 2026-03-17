@@ -9,7 +9,8 @@ from parsers.models import PHP_EXTENSIONS
 
 _DATE_PATTERN = re.compile(
     r"(\d{1,2}\.\d{1,2}\.\d{4}|\d{4}-\d{2}-\d{2}|"
-    r"(?:január|február|marec|apríl|máj|jún|júl|august|september|október|november|december))",
+    r"(?:január[a]?|február[a]?|marc[ae]?|apríl[a]?|máj[a]?|jún[a]?|"
+    r"júl[a]?|august[a]?|septembr[a]?|októbr[a]?|novembr[a]?|decembr[a]?))",
     re.IGNORECASE,
 )
 _EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")

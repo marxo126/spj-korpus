@@ -10,7 +10,7 @@ from parsers.models import ElementNode, FileContext, PhpBlock
 
 # ── PHP block patterns ─────────────────────────────────────────────────
 _PHP_BLOCK_RE = re.compile(
-    r"<\?(?:php|=)(.*?)\?>",
+    r"<\?(?:php|=)(.*?)(?:\?>|\Z)",
     re.DOTALL,
 )
 

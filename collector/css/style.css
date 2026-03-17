@@ -170,7 +170,7 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
 }
 .btn:active { transform: scale(0.97); }
 .btn-red { background: var(--red); color: white; }
-.btn-green { background: var(--green); color: white; }
+.btn-green { background: #15803D; color: white; }
 .btn-blue { background: var(--blue); color: white; }
 .btn-gray { background: var(--light-gray); color: var(--dark); }
 .btn-outline {
@@ -247,8 +247,8 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
     padding: 12px 0;
 }
 .checkbox-group input[type="checkbox"] {
-    width: 24px;
-    height: 24px;
+    width: 44px;
+    height: 44px;
     cursor: pointer;
     flex-shrink: 0;
 }
@@ -630,7 +630,7 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
     width: 44px;
     height: 44px;
     border-radius: 50%;
-    background: rgba(255,255,255,0.2);
+    background: rgba(0,0,0,0.5);
     border: none;
     color: white;
     font-size: 1.125rem;
@@ -721,7 +721,7 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
 .theme-badge {
     font-size: 0.875rem;
     font-weight: 700;
-    color: var(--blue);
+    color: #1D4ED8;
     background: #DBEAFE;
     padding: 4px 10px;
     border-radius: 20px;
@@ -870,11 +870,11 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
 }
 .video-card-actions .btn-approve {
     flex: 1;
-    padding: 6px;
+    padding: 10px;
     border: none;
     border-radius: 6px;
     background: #DCFCE7;
-    color: var(--green);
+    color: #15803D;
     font-size: 1rem;
     font-weight: 700;
     cursor: pointer;
@@ -885,7 +885,7 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
     border: none;
     border-radius: 6px;
     background: #FEE2E2;
-    color: var(--red);
+    color: #B91C1C;
     font-size: 1rem;
     font-weight: 700;
     cursor: pointer;
@@ -1024,7 +1024,7 @@ html.dark .bottom-nav { background: #0F172A; border-color: #64748B; }
 html.dark .admin-table tr:hover { background: #334155; }
 html.dark .consent-card { border-color: #64748B; }
 html.dark .consent-card:has(input:checked) {
-    border-color: var(--green);
+    border-color: #4ADE80;
     background: #14532D;
 }
 html.dark .form-group .radio-group label {

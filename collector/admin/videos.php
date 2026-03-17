@@ -79,7 +79,7 @@ $total_pages = ceil($total / $per_page);
              onmouseenter="hoverPlay(this)" onmouseleave="hoverPause(this)"
              aria-label="Prehrať video posunku <?= htmlspecialchars($r['word_sk']) ?>">
             <video muted loop playsinline preload="none" data-src="<?= htmlspecialchars($src) ?>" aria-label="Nahrávka posunku <?= htmlspecialchars($r['word_sk']) ?>"></video>
-            <span class="video-status-badge"><?= $status_icon ?></span>
+            <span class="video-status-badge" role="status"><?= $status_icon ?></span>
             <span class="video-play-btn">▶</span>
         </div>
         <div class="video-card-info">
@@ -92,13 +92,15 @@ $total_pages = ceil($total / $per_page);
         </div>
         <div class="video-card-actions">
             <?php if ($r['status'] === 'pending'): ?>
-            <form method="POST" action="/admin/api/videos.php" style="display:inline;">
+            <form method="POST" action="/admin/api/videos.php" style="display:inline;"
+                  onsubmit="return confirm('Naozaj schváliť toto video?')">
                 <input type="hidden" name="action" value="approve">
                 <input type="hidden" name="recording_id" value="<?= $r['id'] ?>">
                 <?= csrf_field() ?>
                 <button type="submit" class="btn-approve" title="Schváliť">✓</button>
             </form>
-            <form method="POST" action="/admin/api/videos.php" style="display:inline;">
+            <form method="POST" action="/admin/api/videos.php" style="display:inline;"
+                  onsubmit="return confirm('Naozaj zamietnuť toto video?')">
                 <input type="hidden" name="action" value="reject">
                 <input type="hidden" name="recording_id" value="<?= $r['id'] ?>">
                 <?= csrf_field() ?>
@@ -134,7 +136,7 @@ $total_pages = ceil($total / $per_page);
 <?php endif; ?>
 
 <!-- Video modal -->
-<div id="video-modal" class="video-modal" role="dialog" aria-label="Prehrávanie videa" style="display:none;" onclick="closeVideoModal()">
+<div id="video-modal" class="video-modal" role="dialog" aria-label="Prehrávanie videa" style="display:none;" onclick="closeVideoModal()" onkeydown="if(event.key==='Escape')closeVideoModal()">
     <button class="close-btn" onclick="closeVideoModal()" aria-label="Zavrieť video">×</button>
     <video id="modal-video" controls autoplay muted playsinline style="max-width:90%;max-height:80vh;border-radius:12px;" aria-label="Prehrávanie nahrávky posunku"></video>
 </div>

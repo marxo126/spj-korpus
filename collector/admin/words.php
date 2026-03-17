@@ -64,15 +64,15 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
         <div class="form-row">
             <div class="form-group">
                 <label>Gloss ID</label>
-                <input type="text" name="gloss_id" placeholder="VODA-1" required pattern="[A-Z0-9_-]+">
+                <input type="text" name="gloss_id" placeholder="VODA-1" required pattern="[A-Z0-9_-]+" aria-label="Gloss ID">
             </div>
             <div class="form-group">
                 <label>Slovensky</label>
-                <input type="text" name="word_sk" placeholder="voda" required>
+                <input type="text" name="word_sk" placeholder="voda" required aria-label="Slovensky">
             </div>
             <div class="form-group">
                 <label>Téma</label>
-                <select name="theme_id">
+                <select name="theme_id" aria-label="Téma">
                     <option value="">— Bez témy —</option>
                     <?php foreach ($themes as $t): ?>
                     <option value="<?= $t['id'] ?>"><?= htmlspecialchars($t['emoji'] . ' ' . $t['name']) ?></option>
@@ -83,11 +83,11 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
         <div class="form-row">
             <div class="form-group">
                 <label>Link Posunky.sk</label>
-                <input type="url" name="link_posunky" placeholder="https://posunky.sk/...">
+                <input type="url" name="link_posunky" placeholder="https://posunky.sk/..." aria-label="Link Posunky.sk">
             </div>
             <div class="form-group">
                 <label>Link Dictio.info</label>
-                <input type="url" name="link_dictio" placeholder="https://dictio.info/...">
+                <input type="url" name="link_dictio" placeholder="https://dictio.info/..." aria-label="Link Dictio.info">
             </div>
         </div>
         <button type="submit" class="btn btn-blue" style="width:auto;padding:10px 24px;">Pridať</button>
@@ -176,15 +176,15 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
             <?= csrf_field() ?>
             <div class="form-group">
                 <label>Gloss ID</label>
-                <input type="text" name="gloss_id" id="edit-gloss-id" required>
+                <input type="text" name="gloss_id" id="edit-gloss-id" required aria-label="Gloss ID">
             </div>
             <div class="form-group">
                 <label>Slovensky</label>
-                <input type="text" name="word_sk" id="edit-word-sk" required>
+                <input type="text" name="word_sk" id="edit-word-sk" required aria-label="Slovensky">
             </div>
             <div class="form-group">
                 <label>Téma</label>
-                <select name="theme_id" id="edit-theme-id">
+                <select name="theme_id" id="edit-theme-id" aria-label="Téma">
                     <option value="">— Bez témy —</option>
                     <?php foreach ($themes as $t): ?>
                     <option value="<?= $t['id'] ?>"><?= htmlspecialchars($t['emoji'] . ' ' . $t['name']) ?></option>
@@ -193,11 +193,11 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
             </div>
             <div class="form-group">
                 <label>Link Posunky.sk</label>
-                <input type="url" name="link_posunky" id="edit-link-posunky">
+                <input type="url" name="link_posunky" id="edit-link-posunky" aria-label="Link Posunky.sk">
             </div>
             <div class="form-group">
                 <label>Link Dictio.info</label>
-                <input type="url" name="link_dictio" id="edit-link-dictio">
+                <input type="url" name="link_dictio" id="edit-link-dictio" aria-label="Link Dictio.info">
             </div>
             <div style="display:flex;gap:10px;">
                 <button type="submit" class="btn btn-blue" style="flex:1;">Uložiť</button>

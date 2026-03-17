@@ -66,7 +66,39 @@ exclude:
   - "sql/**"
   - "img/**"
 
-suppressions: []
+suppressions:
+  # PHP-generated content includes emoji/text icons that the static parser cannot see
+  - rule: "color"
+    check: "error-color-only"
+    file: "admin/users.php"
+    reason: "Alert div content is PHP-generated with emoji prefix (e.g. ✅, ❌)"
+  - rule: "color"
+    check: "error-color-only"
+    file: "admin/words.php"
+    reason: "Alert div content includes emoji prefix via PHP conditionals"
+  - rule: "color"
+    check: "error-color-only"
+    file: "admin/videos.php"
+    reason: "Status badge uses emoji (⏳/✅/❌) via PHP variable"
+  - rule: "color"
+    check: "color-only-status"
+    file: "admin/videos.php"
+    reason: "video-status-badge shows emoji (⏳/✅/❌) via PHP variable"
+  - rule: "color"
+    check: "color-only-status"
+    file: "record.php"
+    reason: "Toast content is set by JS with emoji prefix (✅/⚠️)"
+  - rule: "color"
+    check: "error-color-only"
+    file: "record.php"
+    reason: "Status badges have text content (✅ Ruky / ❌ Tvár) — set by JS"
+  # Project-level checks that don't apply to PHP include-based architecture
+  - rule: "structure"
+    check: "page-title"
+    reason: "Title is set in header.php include, not in individual page files"
+  - rule: "focus"
+    check: "focus-trap"
+    reason: "Framing guide modal has focus management + Escape handler in framingGuide.js"
 
 reports:
   output_dir: "tools/a11y-audit/reports"

@@ -47,11 +47,19 @@ class KeyboardRule(BaseRule):
 
         # JS event listeners — approximate by checking click listeners
         # without nearby keydown listeners on same target
+        import re
+        _BTN_TARGET_RE = re.compile(
+            r"""getElementById\(['"][\w-]*(?:btn|button|submit|record)""", re.IGNORECASE
+        )
         for path, fc in iter_files(ctx, JS_EXTENSIONS):
             click_lines: list[int] = []
             key_lines: list[int] = []
             for listener in fc.event_listeners:
                 if listener.event_type == "click":
+                    # Skip .onclick property assignments on button-like targets
+                    # (buttons handle Enter/Space natively)
+                    if ".onclick" in listener.code and _BTN_TARGET_RE.search(listener.code):
+                        continue
                     click_lines.append(listener.line)
                 elif listener.event_type in ("keydown", "keypress", "keyup"):
                     key_lines.append(listener.line)

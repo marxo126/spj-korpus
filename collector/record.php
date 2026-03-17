@@ -79,7 +79,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="countdown-overlay" id="countdown-overlay" style="display: none;">
                 <div class="countdown-num" id="countdown-num">3</div>
             </div>
-            <div class="recording-indicator" id="recording-indicator" style="display: none;">
+            <div class="recording-indicator" id="recording-indicator" role="status" aria-live="assertive" style="display: none;">
                 <div class="rec-dot"></div>
                 <span id="recording-timer" role="timer" aria-live="off" aria-label="Čas nahrávania">0:00 / 0:05</span>
             </div>
@@ -90,7 +90,7 @@ require_once __DIR__ . '/includes/header.php';
                controls autoplay muted playsinline loop aria-label="Nahrané video na schválenie"></video>
 
         <!-- Quality gate results -->
-        <div id="quality-gate-container" style="display: none;"></div>
+        <div id="quality-gate-container" aria-live="polite" style="display: none;"></div>
 
         <!-- Camera loading -->
         <div class="camera-container" id="camera-loading">
@@ -101,9 +101,9 @@ require_once __DIR__ . '/includes/header.php';
 
         <!-- Status badges -->
         <div class="status-row" id="status-badges" aria-live="polite" aria-atomic="true">
-            <span class="status-badge status-ok" id="badge-hands">✅ Ruky</span>
-            <span class="status-badge status-ok" id="badge-face">✅ Tvár</span>
-            <span class="status-badge status-ok" id="badge-light">✅ Svetlo</span>
+            <span class="status-badge status-ok" id="badge-hands" role="status">✅ Ruky</span>
+            <span class="status-badge status-ok" id="badge-face" role="status">✅ Tvár</span>
+            <span class="status-badge status-ok" id="badge-light" role="status">✅ Svetlo</span>
         </div>
     </div>
 
@@ -160,7 +160,7 @@ require_once __DIR__ . '/includes/header.php';
 <div id="recording-announce" aria-live="assertive" class="sr-only" style="position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);border:0;"></div>
 
 <!-- Upload toast -->
-<div class="toast success" id="toast" style="display: none;"></div>
+<div class="toast success" id="toast" role="status" aria-live="polite" style="display: none;"></div>
 
 <?php $v = '?v=' . time(); ?>
 <script src="/js/qualityCheck.js<?= $v ?>"></script>

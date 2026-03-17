@@ -57,12 +57,12 @@ $page_title = 'Témy — ' . SITE_NAME;
 require_once __DIR__ . '/includes/header.php';
 ?>
 
-<div style="margin-bottom: 16px;">
+<div style="margin-bottom: 16px;" role="status" aria-live="polite">
     <div class="progress-info">
         <span class="label">Dnes</span>
         <span class="count" id="progress-count"><?= $today_count ?> / <?= DAILY_GOAL ?></span>
     </div>
-    <div class="progress-bar">
+    <div class="progress-bar" role="progressbar" aria-valuenow="<?= $today_count ?>" aria-valuemin="0" aria-valuemax="<?= DAILY_GOAL ?>" aria-label="Dnešný pokrok">
         <div class="fill" style="width: <?= min(100, ($today_count / DAILY_GOAL) * 100) ?>%;"></div>
     </div>
 </div>
@@ -88,7 +88,7 @@ require_once __DIR__ . '/includes/header.php';
         <?php if ($completed): ?>
             <span class="theme-check">✅</span>
         <?php elseif ($is_suggested): ?>
-            <span class="theme-badge">Odporúčané</span>
+            <span class="theme-badge" role="status">Odporúčané</span>
         <?php endif; ?>
     </a>
     <?php endforeach; ?>

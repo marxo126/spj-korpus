@@ -70,14 +70,19 @@ class InteractiveRule(BaseRule):
         """Check interactive element sizes < 48px."""
         findings: list[Finding] = []
         min_size = config.get("thresholds", {}).get("target_size_enhanced", 44)
-        interactive_selectors = {"button", "a", "input", "[type=", ".btn"}
+        _interactive_re = re.compile(
+            r"(?:^|[\s,>+~])(?:button|a(?=[.#\[:>\s,+~]|$)|input|select|textarea)"
+            r"|\.btn|\[type=",
+        )
 
         for rule in ctx.css.rules:
             sel = rule.selector.lower()
+            # Strip CSS comments from selector for matching
+            sel_clean = re.sub(r"/\*.*?\*/", "", sel).strip()
             # Skip media query rules (they may be responsive overrides)
             if "@media" in sel:
                 continue
-            is_interactive = any(s in sel for s in interactive_selectors)
+            is_interactive = bool(_interactive_re.search(sel_clean))
             if not is_interactive:
                 continue
             props = rule.properties
@@ -107,6 +112,10 @@ class InteractiveRule(BaseRule):
         findings: list[Finding] = []
         for path, fc in iter_files(ctx, JS_EXTENSIONS):
             for i, line_text in enumerate(fc.lines, 1):
+                stripped = line_text.strip()
+                # Skip comments — "drop" in prose doesn't mean drag-and-drop
+                if stripped.startswith("//") or stripped.startswith("*") or stripped.startswith("/*"):
+                    continue
                 if _DRAG_PATTERNS.search(line_text):
                     findings.append(self._finding(
                         check_id="drag-alternative",

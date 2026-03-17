@@ -7,7 +7,9 @@ from rules.base import BaseRule, Finding, Severity
 from rules.helpers import iter_elements
 
 _COLOR_WORDS = re.compile(r"(red|green|blue|orange|yellow|status|success|danger|warning)", re.I)
-_ICON_CHARS = frozenset("✓✗✔✘!⚠●○◉✕✖✚⬤▶▲►")
+_ICON_CHARS = frozenset("✓✗✔✘!⚠●○◉✕✖✚⬤▶▲►✅❌⏳")
+# Elements whose content is set dynamically by JS or PHP — always have text
+_DYNAMIC_CONTENT_IDS = frozenset(("toast", "badge-hands", "badge-face", "badge-light"))
 
 
 class ColorRule(BaseRule):
@@ -104,6 +106,11 @@ class ColorRule(BaseRule):
             return True
         if len(text) > 1:
             return True
+        # Elements with dynamic content (filled by JS or PHP)
+        elem_id = str(elem.attributes.get("id", ""))
+        if elem_id in _DYNAMIC_CONTENT_IDS:
+            return True
+        # Check children
         for child in elem.children:
             if child.tag in ("i", "svg", "img", "span"):
                 child_cls = str(child.attributes.get("class", ""))
@@ -111,4 +118,8 @@ class ColorRule(BaseRule):
                     return True
                 if child.tag == "img":
                     return True
+            # Check child text content recursively
+            child_text = child.text_content.strip()
+            if child_text and (len(child_text) > 1 or any(c in _ICON_CHARS for c in child_text)):
+                return True
         return False

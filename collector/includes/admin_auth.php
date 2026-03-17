@@ -17,7 +17,7 @@ function require_admin(): void {
     }
     if (!is_admin()) {
         http_response_code(403);
-        echo '<!DOCTYPE html><html><body><h1>403 — Prístup zamietnutý</h1><p><a href="/">Späť</a></p></body></html>';
+        echo '<!DOCTYPE html><html lang="sk"><body><h1>403 — Prístup zamietnutý</h1><p><a href="/">Späť</a></p></body></html>';
         exit;
     }
 }
@@ -34,7 +34,7 @@ function require_researcher(): void {
     }
     if (!is_researcher()) {
         http_response_code(403);
-        echo '<!DOCTYPE html><html><body><h1>403 — Prístup zamietnutý</h1><p><a href="/">Späť</a></p></body></html>';
+        echo '<!DOCTYPE html><html lang="sk"><body><h1>403 — Prístup zamietnutý</h1><p><a href="/">Späť</a></p></body></html>';
         exit;
     }
 }

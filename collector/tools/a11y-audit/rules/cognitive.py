@@ -19,6 +19,13 @@ _CONFIRM_PATTERN = re.compile(
     r"\b(confirm\s*\(|modal|dialog|are\s+you\s+sure|naozaj|ste\s+si\s+ist)",
     re.IGNORECASE,
 )
+# DOM/IndexedDB operations that match _DESTRUCTIVE_PATTERN but aren't user-facing
+_INTERNAL_DESTRUCTIVE_RE = re.compile(
+    r"(\.\s*remove\s*\(|\.removeChild|\.removeAttribute|\.removeEventListener|"
+    r"store\.delete|indexedDB|objectStore|\.removeItem|clearTimeout|clearInterval|"
+    r"URL\.revokeObjectURL|async\s+remove\s*\(|await\s+this\.remove\s*\(|"
+    r"await\s+self\.remove\s*\()",
+)
 _FOCUS_CHANGE_RE = re.compile(
     r"\b(window\.location|location\.href|location\.assign|\.submit\(\)|navigate)\b",
 )
@@ -156,9 +163,17 @@ class CognitiveRule(BaseRule):
             for i, line_text in enumerate(lines, 1):
                 if not _DESTRUCTIVE_PATTERN.search(line_text):
                     continue
-                # Check surrounding lines for confirmation
-                start = max(0, i - 3)
-                end = min(len(lines), i + 3)
+                # Skip internal DOM/IndexedDB operations (not user-facing)
+                if _INTERNAL_DESTRUCTIVE_RE.search(line_text):
+                    continue
+                # Skip HTML/PHP comments (not user-facing actions)
+                stripped = line_text.strip()
+                if stripped.startswith("<!--") or stripped.startswith("//") or stripped.startswith("/*") or stripped.startswith("*"):
+                    continue
+                # Check surrounding lines for confirmation (wide range to cover
+                # multi-line form tags where confirm() is on the <form> opener)
+                start = max(0, i - 6)
+                end = min(len(lines), i + 10)
                 nearby = "\n".join(lines[start:end])
                 if _CONFIRM_PATTERN.search(nearby):
                     continue
