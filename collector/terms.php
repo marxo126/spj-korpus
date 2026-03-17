@@ -247,7 +247,7 @@ function showVersion(v) {
                 <!-- VIDEO = deleted -->
                 <div style="flex: 1; min-width: 160px; max-width: 220px; text-align: center; background: #FEE2E2; border-radius: 12px; padding: 16px;">
                     <div style="font-size: 14px; font-weight: 700; color: #DC2626; margin-bottom: 12px;">VYMAZANÉ</div>
-                    <svg width="100" height="120" viewBox="0 0 100 120" style="margin: 0 auto;">
+                    <svg width="100" height="120" viewBox="0 0 100 120" aria-hidden="true" style="margin: 0 auto;">
                         <!-- Face circle -->
                         <circle cx="50" cy="25" r="18" fill="#FCA5A5" stroke="#DC2626" stroke-width="2"/>
                         <!-- Eyes -->
@@ -278,7 +278,7 @@ function showVersion(v) {
                 <!-- POSE = kept -->
                 <div style="flex: 1; min-width: 160px; max-width: 220px; text-align: center; background: #DCFCE7; border-radius: 12px; padding: 16px;">
                     <div style="font-size: 14px; font-weight: 700; color: #15803D; margin-bottom: 12px;">ZOSTÁVA</div>
-                    <svg width="100" height="120" viewBox="0 0 100 120" style="margin: 0 auto;">
+                    <svg width="100" height="120" viewBox="0 0 100 120" aria-hidden="true" style="margin: 0 auto;">
                         <!-- Head outline (dashed = no photo) -->
                         <ellipse cx="50" cy="24" rx="16" ry="19" fill="none" stroke="#22C55E" stroke-width="1.5" stroke-dasharray="3,2"/>
                         <!-- Face landmarks as dots -->

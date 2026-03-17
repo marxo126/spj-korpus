@@ -46,7 +46,7 @@ require_once __DIR__ . '/includes/header.php';
 <h1 style="margin-bottom: 20px;">👤 Profil</h1>
 
 <?php if ($saved): ?>
-<div style="background: #DCFCE7; color: #15803D; padding: 12px 16px; border-radius: 10px; font-weight: 600; margin-bottom: 16px;">
+<div role="alert" style="background: #DCFCE7; color: #15803D; padding: 12px 16px; border-radius: 10px; font-weight: 600; margin-bottom: 16px;">
     ✅ Uložené
 </div>
 <?php endif; ?>

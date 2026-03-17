@@ -172,7 +172,7 @@ function showVersion(v) {
         <h2 style="font-size: 17px; margin: 0;">5. Dátum</h2>
     </div>
     <div style="font-size: 15px; line-height: 1.7;">
-        <p>Toto vyhlásenie bolo pripravené <strong>15. marca 2026</strong>.</p>
+        <p>Toto vyhlásenie bolo pripravené <strong>17. marca 2026</strong>.</p>
         <p style="color: var(--gray); font-size: 14px; margin-top: 4px;">Aktualizujeme ho pri významných zmenách, minimálne raz ročne.</p>
     </div>
 </div>
@@ -250,8 +250,8 @@ Kontakt: <a href="mailto:data@spj.sk" style="color:var(--blue)">data@spj.sk</a><
 </p>
 
 <h3 style="margin: 20px 0 8px; color: var(--dark);">7. Dátum vyhlásenia</h3>
-<p>Toto vyhlásenie bolo vypracované dňa <strong>15. marca 2026</strong> na základe vlastného hodnotenia prevádzkovateľa.</p>
-<p style="margin-top:4px;">Posledná aktualizácia: <strong>15. marca 2026</strong>.</p>
+<p>Toto vyhlásenie bolo vypracované dňa <strong>17. marca 2026</strong> na základe vlastného hodnotenia prevádzkovateľa.</p>
+<p style="margin-top:4px;">Posledná aktualizácia: <strong>17. marca 2026</strong>.</p>
 <p style="margin-top:4px; color: var(--gray);">Vyhlásenie bude preskúmané a aktualizované pri významných zmenách aplikácie, minimálne raz ročne.</p>
 
 </div><!-- /card -->

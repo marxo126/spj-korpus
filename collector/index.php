@@ -227,7 +227,7 @@ require_once __DIR__ . '/includes/header.php';
 <?php endif; ?>
 
 <?php if ($error): ?>
-    <div class="error-msg"><?= htmlspecialchars($error) ?></div>
+    <div class="error-msg" role="alert">✗ <?= htmlspecialchars($error) ?></div>
 <?php endif; ?>
 
 <?php if ($mode === 'login'): ?>
@@ -238,12 +238,12 @@ require_once __DIR__ . '/includes/header.php';
         <?= csrf_field() ?>
         <div class="form-group">
             <label for="email">Email</label>
-            <input type="email" id="email" name="email" placeholder="vas@email.sk" required
+            <input type="email" id="email" name="email" placeholder="vas@email.sk" required autocomplete="email"
                    value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
         </div>
         <div class="form-group">
             <label for="password">Heslo</label>
-            <input type="password" id="password" name="password" placeholder="••••••••" required>
+            <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
         </div>
         <button type="submit" class="btn btn-blue" style="margin-bottom: 8px;">Prihlásiť sa</button>
     </form>
@@ -253,7 +253,7 @@ require_once __DIR__ . '/includes/header.php';
     <div class="divider">alebo</div>
     <?php if (!empty(GOOGLE_CLIENT_ID)): ?>
     <a href="/api/auth.php?action=google" class="btn btn-gray" style="margin-bottom: 12px;">
-        <svg width="18" height="18" viewBox="0 0 24 24" style="vertical-align: middle; margin-right: 8px;">
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true" style="vertical-align: middle; margin-right: 8px;">
             <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/>
             <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
             <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
@@ -279,16 +279,16 @@ require_once __DIR__ . '/includes/header.php';
 
         <div class="form-group">
             <label for="reg-email">Email <span class="req">*</span></label>
-            <input type="email" id="reg-email" name="email" placeholder="vas@email.sk" required
+            <input type="email" id="reg-email" name="email" placeholder="vas@email.sk" required autocomplete="email"
                    value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
         </div>
         <div class="form-group">
             <label for="reg-password">Heslo <span class="req">*</span></label>
-            <input type="password" id="reg-password" name="password" placeholder="Aspoň 8 znakov" required minlength="8">
+            <input type="password" id="reg-password" name="password" placeholder="Aspoň 8 znakov" required minlength="8" autocomplete="new-password">
         </div>
         <div class="form-group">
             <label for="reg-password2">Heslo znova <span class="req">*</span></label>
-            <input type="password" id="reg-password2" name="password2" placeholder="Zopakujte heslo" required minlength="8">
+            <input type="password" id="reg-password2" name="password2" placeholder="Zopakujte heslo" required minlength="8" autocomplete="new-password">
         </div>
         <script>
         document.getElementById('reg-password2')?.addEventListener('input', function() {
@@ -302,7 +302,7 @@ require_once __DIR__ . '/includes/header.php';
         </script>
         <div class="form-group">
             <label for="display-name">Meno <span class="req">*</span></label>
-            <input type="text" id="display-name" name="display_name" placeholder="napr. Janka" required
+            <input type="text" id="display-name" name="display_name" placeholder="napr. Janka" required autocomplete="name"
                    value="<?= htmlspecialchars($_POST['display_name'] ?? '') ?>">
         </div>
 

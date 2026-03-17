@@ -51,7 +51,7 @@ require_once __DIR__ . '/includes/header.php';
     </p>
 
     <?php if ($error): ?>
-        <div class="error-msg"><?= htmlspecialchars($error) ?></div>
+        <div class="error-msg" role="alert">✗ <?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
 
     <form method="POST">

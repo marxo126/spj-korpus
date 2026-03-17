@@ -79,13 +79,13 @@ $source_icons = ['php' => '🐘', 'js' => '⚡', 'api' => '🔗'];
 
 <!-- Filters -->
 <div class="admin-filter" style="margin-bottom:16px;">
-    <select onchange="location.href='/admin/?tab=logs&log_level='+this.value+'&log_source=<?= urlencode($filter_source) ?>'">
+    <select aria-label="Filtrovať podľa úrovne" onchange="location.href='/admin/?tab=logs&log_level='+this.value+'&log_source=<?= urlencode($filter_source) ?>'">
         <option value="all" <?= $filter_level === 'all' ? 'selected' : '' ?>>Všetky úrovne</option>
         <option value="error" <?= $filter_level === 'error' ? 'selected' : '' ?>>🔴 Chyby</option>
         <option value="warning" <?= $filter_level === 'warning' ? 'selected' : '' ?>>🟡 Varovania</option>
         <option value="info" <?= $filter_level === 'info' ? 'selected' : '' ?>>🔵 Info</option>
     </select>
-    <select onchange="location.href='/admin/?tab=logs&log_level=<?= urlencode($filter_level) ?>&log_source='+this.value">
+    <select aria-label="Filtrovať podľa zdroja" onchange="location.href='/admin/?tab=logs&log_level=<?= urlencode($filter_level) ?>&log_source='+this.value">
         <option value="all" <?= $filter_source === 'all' ? 'selected' : '' ?>>Všetky zdroje</option>
         <option value="php" <?= $filter_source === 'php' ? 'selected' : '' ?>>🐘 PHP</option>
         <option value="js" <?= $filter_source === 'js' ? 'selected' : '' ?>>⚡ JavaScript</option>

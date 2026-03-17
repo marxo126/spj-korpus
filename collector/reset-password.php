@@ -59,7 +59,7 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 <?php elseif ($valid): ?>
     <?php if ($error): ?>
-        <div class="error-msg"><?= htmlspecialchars($error) ?></div>
+        <div class="error-msg" role="alert">✗ <?= htmlspecialchars($error) ?></div>
     <?php endif; ?>
     <div class="card">
         <form method="POST">
@@ -67,11 +67,11 @@ require_once __DIR__ . '/includes/header.php';
             <input type="hidden" name="token" value="<?= htmlspecialchars($token) ?>">
             <div class="form-group">
                 <label for="password">Nové heslo</label>
-                <input type="password" id="password" name="password" placeholder="Aspoň 6 znakov" required minlength="6">
+                <input type="password" id="password" name="password" placeholder="Aspoň 6 znakov" required minlength="6" autocomplete="new-password">
             </div>
             <div class="form-group">
                 <label for="password2">Zopakujte heslo</label>
-                <input type="password" id="password2" name="password2" placeholder="Aspoň 6 znakov" required minlength="6">
+                <input type="password" id="password2" name="password2" placeholder="Aspoň 6 znakov" required minlength="6" autocomplete="new-password">
             </div>
             <button type="submit" class="btn btn-blue">Zmeniť heslo</button>
         </form>

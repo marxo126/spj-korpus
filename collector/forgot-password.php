@@ -53,7 +53,7 @@ require_once __DIR__ . '/includes/header.php';
 <?php endif; ?>
 
 <?php if ($error): ?>
-    <div class="error-msg"><?= htmlspecialchars($error) ?></div>
+    <div class="error-msg" role="alert">✗ <?= htmlspecialchars($error) ?></div>
 <?php endif; ?>
 
 <div class="card">
@@ -61,7 +61,7 @@ require_once __DIR__ . '/includes/header.php';
         <?= csrf_field() ?>
         <div class="form-group">
             <label for="email">Email</label>
-            <input type="email" id="email" name="email" placeholder="vas@email.sk" required
+            <input type="email" id="email" name="email" placeholder="vas@email.sk" required autocomplete="email"
                    value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
         </div>
         <button type="submit" class="btn btn-blue">Odoslať odkaz</button>

@@ -21,8 +21,8 @@ require_once __DIR__ . '/includes/header.php';
 <div id="validate-meta" style="text-align: center; font-size: 13px; color: var(--gray); margin-bottom: 8px;"></div>
 
 <!-- Video -->
-<video class="video-preview" id="validate-video" autoplay playsinline loop
-       style="margin-bottom: 16px;"></video>
+<video class="video-preview" id="validate-video" autoplay muted playsinline loop
+       style="margin-bottom: 16px;" aria-label="Nahrávka posunku na overenie"></video>
 
 <!-- Vote progress -->
 <div id="vote-progress" style="text-align: center; font-size: 13px; color: var(--gray); margin-bottom: 12px;"></div>
