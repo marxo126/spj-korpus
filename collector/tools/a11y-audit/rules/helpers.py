@@ -97,13 +97,49 @@ def is_large_text(font_size_px: float, bold: bool = False) -> bool:
 # ── CSS helpers ─────────────────────────────────────────────────────────
 
 def resolve_css_var(name: str, css_ctx: CSSContext, mode: str = "light") -> str | None:
-    for var in css_ctx.variables:
-        if var.name == name and var.mode == mode:
-            return var.resolved_hex or var.value
-    for var in css_ctx.variables:
-        if var.name == name:
-            return var.resolved_hex or var.value
+    """Resolve a CSS custom property to its value. Uses indexed lookup."""
+    idx = _css_var_index(css_ctx)
+    key = (name, mode)
+    if key in idx:
+        v = idx[key]
+        return v.resolved_hex or v.value
+    # Fallback: any mode
+    key_any = (name, None)
+    if key_any in idx:
+        v = idx[key_any]
+        return v.resolved_hex or v.value
     return None
+
+
+def _css_var_index(css_ctx: CSSContext) -> dict:
+    """Build/cache a dict index of CSS variables for O(1) lookup."""
+    if not hasattr(css_ctx, "_var_index"):
+        idx: dict = {}
+        for var in css_ctx.variables:
+            idx[(var.name, var.mode)] = var
+            # Also store with mode=None as fallback (first wins)
+            if (var.name, None) not in idx:
+                idx[(var.name, None)] = var
+        css_ctx._var_index = idx  # type: ignore[attr-defined]
+    return css_ctx._var_index  # type: ignore[attr-defined]
+
+
+def resolve_css_value(value: str, css_ctx: CSSContext, mode: str = "light") -> str | None:
+    """Resolve a CSS value that may contain var(--name) or var(--name, fallback)."""
+    if not value:
+        return None
+    value = value.strip()
+    if value.startswith("var("):
+        inner = value[4:].rstrip(")")
+        parts = inner.split(",", 1)
+        name = parts[0].strip()
+        resolved = resolve_css_var(name, css_ctx, mode)
+        if resolved:
+            return resolved
+        if len(parts) > 1:
+            return parts[1].strip()
+        return None
+    return value
 
 
 # ── Iteration helpers ───────────────────────────────────────────────────
@@ -132,3 +168,49 @@ def has_accessible_name(elem: ElementNode) -> bool:
         or elem.attributes.get("aria-labelledby")
         or elem.attributes.get("title")
     )
+
+
+# ── Shared utilities ────────────────────────────────────────────────────
+
+_PX_RE = re.compile(r"([\d.]+)\s*px")
+
+
+def parse_px(value: str | None) -> float | None:
+    """Extract pixel value from a CSS property like '14px' or '1.5rem'. Returns None if not px."""
+    if not value:
+        return None
+    m = _PX_RE.search(str(value))
+    return float(m.group(1)) if m else None
+
+
+def line_of(content: str, offset: int) -> int:
+    """Convert a byte offset in content to a 1-based line number."""
+    return content[:offset].count("\n") + 1
+
+
+_INTERACTIVE_SEL_RE = re.compile(
+    r"(?:^|[\s,>+~])(?:button|a\b|input|select|textarea|\[role=)",
+    re.IGNORECASE,
+)
+
+
+def is_interactive_selector(selector: str) -> bool:
+    """Check if a CSS selector targets interactive elements."""
+    return bool(_INTERACTIVE_SEL_RE.search(selector))
+
+
+def walk_elements(elem: ElementNode) -> Iterator[ElementNode]:
+    """Recursively yield all descendant ElementNodes."""
+    yield elem
+    for child in elem.children:
+        yield from walk_elements(child)
+
+
+def is_include_file(path: str) -> bool:
+    """Check if a file path is a PHP include/partial (not a standalone page)."""
+    return "includes/" in path or "include/" in path
+
+
+# ARIA role groups
+ARIA_LIVE_ROLES = frozenset({"status", "alert", "log", "timer"})
+ARIA_DIALOG_ROLES = frozenset({"dialog", "alertdialog"})

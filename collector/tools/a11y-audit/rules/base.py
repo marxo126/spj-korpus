@@ -17,6 +17,17 @@ class Severity(Enum):
     MINOR = "minor"
 
 
+SEVERITY_ORDER: dict["Severity", int] = {
+    Severity.CRITICAL: 0,
+    Severity.SERIOUS: 1,
+    Severity.MODERATE: 2,
+    Severity.MINOR: 3,
+}
+
+# Pseudo-filename for project-wide findings with no associated file.
+PROJECT_WIDE = "(project)"
+
+
 class Detection(Enum):
     STATIC = "static"
     RUNTIME = "runtime"

@@ -4,7 +4,7 @@ from __future__ import annotations
 import re
 
 from rules.base import BaseRule, Finding, Severity
-from rules.helpers import iter_files
+from rules.helpers import iter_files, parse_px
 from parsers.models import JS_EXTENSIONS
 
 
@@ -90,7 +90,7 @@ class InteractiveRule(BaseRule):
                 val = props.get(dim_prop, "")
                 if not val:
                     continue
-                px = _parse_px(val)
+                px = parse_px(val)
                 if px is not None and 0 < px < min_size:
                     findings.append(self._finding(
                         check_id="touch-target",
@@ -131,13 +131,3 @@ class InteractiveRule(BaseRule):
                     ))
                     break  # One finding per file
         return findings
-
-
-def _parse_px(value: str) -> float | None:
-    value = value.strip().lower()
-    if value.endswith("px"):
-        try:
-            return float(value[:-2])
-        except ValueError:
-            return None
-    return None

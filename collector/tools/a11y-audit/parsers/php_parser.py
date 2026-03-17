@@ -87,7 +87,7 @@ def _build_element_tree(soup: BeautifulSoup, source_lines: list[str]) -> list[El
     """Walk BeautifulSoup tree and build flat list of ElementNode."""
     elements: list[ElementNode] = []
 
-    def _walk(tag: Tag, parent_tag: str | None = None) -> None:
+    def _walk(tag: Tag, parent_tag: str | None = None) -> ElementNode | None:
         if not isinstance(tag, Tag):
             return
 

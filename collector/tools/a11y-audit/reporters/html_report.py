@@ -7,16 +7,9 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-from rules.base import Finding, Severity
+from rules.base import Finding, Severity, SEVERITY_ORDER
 
 _TEMPLATES_DIR = Path(__file__).parent / "templates"
-
-_SEVERITY_ORDER = {
-    Severity.CRITICAL: 0,
-    Severity.SERIOUS: 1,
-    Severity.MODERATE: 2,
-    Severity.MINOR: 3,
-}
 
 
 def _group_by_module(findings: list[Finding]) -> dict[str, list[Finding]]:
@@ -120,7 +113,7 @@ def report_html(
 
     sorted_findings = sorted(
         findings,
-        key=lambda f: (_SEVERITY_ORDER[f.severity], f.file, f.line),
+        key=lambda f: (SEVERITY_ORDER[f.severity], f.file, f.line),
     )
 
     by_module = _group_by_module(findings)
@@ -157,7 +150,7 @@ def report_html(
         by_wcag=by_wcag,
         suppressed=suppressed,
         wcag_urls=wcag_urls,
-        severity_order=_SEVERITY_ORDER,
+        severity_order=SEVERITY_ORDER,
     )
 
     reports_cfg = config.get("reports", {})

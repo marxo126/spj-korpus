@@ -5,7 +5,7 @@ from collections import Counter
 
 from colorama import Fore, Style, init
 
-from rules.base import Finding, Severity
+from rules.base import Finding, Severity, SEVERITY_ORDER
 
 # Severity -> color and icon mapping
 _SEVERITY_CONFIG = {
@@ -13,13 +13,6 @@ _SEVERITY_CONFIG = {
     Severity.SERIOUS: (Fore.YELLOW, "!"),
     Severity.MODERATE: (Fore.BLUE, "~"),
     Severity.MINOR: (Fore.WHITE, "i"),
-}
-
-_SEVERITY_ORDER = {
-    Severity.CRITICAL: 0,
-    Severity.SERIOUS: 1,
-    Severity.MODERATE: 2,
-    Severity.MINOR: 3,
 }
 
 
@@ -61,7 +54,7 @@ def report_terminal(
     # Sort: critical first, then serious, moderate, minor
     sorted_findings = sorted(
         findings,
-        key=lambda f: (_SEVERITY_ORDER[f.severity], f.file, f.line),
+        key=lambda f: (SEVERITY_ORDER[f.severity], f.file, f.line),
     )
 
     # Print each finding

@@ -44,6 +44,9 @@ _RULE_RE = re.compile(
     re.MULTILINE,
 )
 
+# Property: value; inside a CSS rule body
+_PROP_RE = re.compile(r"([\w-]+)\s*:\s*([^;]+);")
+
 
 # ── Internal helpers ───────────────────────────────────────────────────
 
@@ -151,7 +154,7 @@ def _extract_rules(content: str) -> list[CSSRule]:
         body = m.group(2)
         line = content[:m.start()].count("\n") + 1
         props: dict[str, str] = {}
-        for prop_match in re.finditer(r"([\w-]+)\s*:\s*([^;]+);", body):
+        for prop_match in _PROP_RE.finditer(body):
             props[prop_match.group(1)] = prop_match.group(2).strip()
         if props:
             rules.append(CSSRule(selector=selector, properties=props, line=line))
