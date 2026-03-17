@@ -30,13 +30,15 @@ class LanguageRule(BaseRule):
         return findings
 
     def _check_html_lang(self, ctx) -> list[Finding]:
-        """<html> must have lang attribute."""
+        """<html> must have lang attribute — only for files that contain one in source."""
         findings: list[Finding] = []
-        found_html = False
         for path, fc, elem in iter_elements(ctx):
             if elem.tag.lower() != "html":
                 continue
-            found_html = True
+            # Skip parser-generated <html> (lxml auto-wraps fragments).
+            # Real <html> tags have a non-zero source line OR appear in source.
+            if elem.line == 0 and "<html" not in fc.content.lower():
+                continue
             lang = elem.attributes.get("lang")
             if not lang or not str(lang).strip():
                 findings.append(self._finding(
@@ -51,19 +53,6 @@ class LanguageRule(BaseRule):
                     fix="Add lang attribute, e.g. <html lang=\"sk\">",
                     impact=("blind",),
                 ))
-        # If no <html> element found at all, flag it
-        if not found_html:
-            findings.append(self._finding(
-                check_id="html-lang",
-                severity=Severity.CRITICAL,
-                wcag="3.1.1",
-                wcag_name="Language of Page",
-                message="No <html> element with lang attribute found",
-                file="(project)",
-                line=0,
-                fix="Add lang attribute to <html>, e.g. <html lang=\"sk\">",
-                impact=("blind",),
-            ))
         return findings
 
     def _check_html_lang_valid(self, ctx) -> list[Finding]:
@@ -71,6 +60,9 @@ class LanguageRule(BaseRule):
         findings: list[Finding] = []
         for path, fc, elem in iter_elements(ctx):
             if elem.tag.lower() != "html":
+                continue
+            # Skip parser-generated <html>
+            if elem.line == 0 and "<html" not in fc.content.lower():
                 continue
             lang = elem.attributes.get("lang")
             if not lang:

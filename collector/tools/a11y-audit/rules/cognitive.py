@@ -144,6 +144,14 @@ class CognitiveRule(BaseRule):
         """Destructive actions should have confirmation."""
         findings: list[Finding] = []
         for path, fc in iter_files(ctx, JS_EXTENSIONS + PHP_EXTENSIONS):
+            # Skip API endpoints and backend-only PHP files (no HTML output).
+            # These are called by JS which handles confirmation on the frontend.
+            if path.endswith(PHP_EXTENSIONS):
+                if "/api/" in path:
+                    continue
+                # If file has very few HTML elements, it's likely a backend script
+                if len(fc.elements) <= 2:
+                    continue
             lines = fc.lines
             for i, line_text in enumerate(lines, 1):
                 if not _DESTRUCTIVE_PATTERN.search(line_text):

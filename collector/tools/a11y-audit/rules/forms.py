@@ -187,6 +187,15 @@ class FormsRule(BaseRule):
     def _check_required_indicator(self, ctx) -> list[Finding]:
         """Required fields should indicate requirement beyond color."""
         findings: list[Finding] = []
+
+        # Build a map of label[for] -> label text for the whole project
+        label_texts: dict[str, str] = {}
+        for _p, _fc, lelem in iter_elements(ctx):
+            if lelem.tag.lower() == "label":
+                for_val = lelem.attributes.get("for")
+                if for_val:
+                    label_texts[str(for_val)] = lelem.text_content
+
         for path, fc, elem in iter_elements(ctx):
             if elem.tag.lower() not in ("input", "select", "textarea"):
                 continue
@@ -194,11 +203,33 @@ class FormsRule(BaseRule):
             aria_required = str(elem.attributes.get("aria-required", "")).lower()
             if required is None and aria_required != "true":
                 continue
-            # Check if there's a visual indicator — look for * in nearby label
-            # This is approximate: we check if aria-label contains *
+            # Check if there's a visual indicator
             label = str(elem.attributes.get("aria-label", ""))
             title = str(elem.attributes.get("title", ""))
-            if "*" in label or "*" in title or "required" in label.lower():
+            indicator_texts = [label, title]
+
+            # Check associated <label for="..."> text
+            elem_id = elem.attributes.get("id")
+            if elem_id and str(elem_id) in label_texts:
+                indicator_texts.append(label_texts[str(elem_id)])
+
+            # Check parent label text
+            if elem.parent_tag and elem.parent_tag.lower() == "label":
+                # parent text not directly available, but check nearby elements
+                pass
+
+            # Check for common required indicators in any associated text
+            _REQUIRED_WORDS = ("*", "required", "povinné", "povinný", "povinne",
+                               "povinny", "povinná", "povinna")
+            has_indicator = False
+            for txt in indicator_texts:
+                txt_lower = txt.lower()
+                if any(w in txt_lower if w != "*" else w in txt
+                       for w in _REQUIRED_WORDS):
+                    has_indicator = True
+                    break
+
+            if has_indicator:
                 continue
             findings.append(self._finding(
                 check_id="required-indicator",

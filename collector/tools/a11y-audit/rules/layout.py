@@ -42,25 +42,30 @@ class LayoutRule(BaseRule):
                     rule, props, findings, target_aa, target_enh,
                 )
 
-            # spacing
+            # spacing — only flag when margin/gap is explicitly set to 0
+            # or negative, not when it's simply absent
             if self._is_interactive_selector(sel):
-                margin = props.get("margin")
-                gap = props.get("gap")
-                if not margin and not gap:
-                    # Only flag if there's explicit sizing but no spacing
-                    if props.get("padding") or props.get("min-height"):
-                        findings.append(self._finding(
-                            check_id="spacing",
-                            severity=Severity.MODERATE,
-                            wcag="2.5.8",
-                            wcag_name="Target Size (Minimum)",
-                            message=f"No margin/gap between interactive elements — {rule.selector}",
-                            file="style.css",
-                            line=rule.line,
-                            element=rule.selector,
-                            fix="Add margin or gap to ensure adequate spacing between targets",
-                            impact=("motor",),
-                        ))
+                margin = props.get("margin", "")
+                gap = props.get("gap", "")
+                margin_val = margin.strip().rstrip(";").strip() if margin else ""
+                gap_val = gap.strip().rstrip(";").strip() if gap else ""
+                # Flag explicit zero or negative spacing
+                is_zero_margin = margin_val in ("0", "0px", "0em", "0rem")
+                is_zero_gap = gap_val in ("0", "0px", "0em", "0rem")
+                has_negative = margin_val.lstrip().startswith("-")
+                if is_zero_margin or is_zero_gap or has_negative:
+                    findings.append(self._finding(
+                        check_id="spacing",
+                        severity=Severity.MODERATE,
+                        wcag="2.5.8",
+                        wcag_name="Target Size (Minimum)",
+                        message=f"Zero/negative margin/gap between interactive elements — {rule.selector}",
+                        file="style.css",
+                        line=rule.line,
+                        element=rule.selector,
+                        fix="Add margin or gap to ensure adequate spacing between targets",
+                        impact=("motor",),
+                    ))
 
             # reflow-320
             if sel in ("body", "html", ".container", ".wrapper", "main"):

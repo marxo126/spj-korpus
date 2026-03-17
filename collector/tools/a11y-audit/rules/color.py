@@ -68,9 +68,21 @@ class ColorRule(BaseRule):
             sel = rule.selector.lower()
             if "a" not in sel:
                 continue
+            # Skip accessibility helper selectors (skip-link, sr-only, etc.)
+            if "skip" in sel or "sr-only" in sel or "visually-hidden" in sel:
+                continue
             props = rule.properties
             td = props.get("text-decoration", "").lower()
             if td == "none" and "border-bottom" not in props:
+                # Check for other visual distinction (background, font-weight, border)
+                has_distinction = any(
+                    k in props for k in (
+                        "border", "font-weight", "background",
+                        "background-color", "outline", "box-shadow",
+                    )
+                )
+                if has_distinction:
+                    continue
                 return [self._finding(
                     check_id="link-distinction",
                     severity=Severity.SERIOUS,

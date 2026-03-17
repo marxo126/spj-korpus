@@ -419,10 +419,11 @@ class TestLanguageRule:
         assert len(hv) == 1
 
     def test_no_html_element(self):
+        # Files without <html> (includes, API endpoints) should not be flagged
         ctx = _ctx(elements=[_elem("div")])
         findings = self.rule.check(ctx, {})
         hl = [f for f in findings if f.check_id == "html-lang"]
-        assert len(hl) == 1
+        assert len(hl) == 0
 
     def test_lang_subtag_ok(self):
         elem = _elem("html", {"lang": "sk-SK"})

@@ -52,7 +52,7 @@ class StructureRule(BaseRule):
                 href = str(elem.attributes.get("href", ""))
                 first_a_per_file[path] = (elem.line, href)
 
-        # landmarks
+        # landmarks — check project-wide (includes provide landmarks for all pages)
         if not has_main:
             findings.append(self._finding(
                 check_id="landmarks",
@@ -113,27 +113,41 @@ class StructureRule(BaseRule):
                     fix="Use a single <h1> per page",
                 ))
 
-        # skip-link
-        for path, fc in iter_files(ctx, PHP_EXTENSIONS):
-            if "includes/" in path or "include/" in path:
+        # skip-link — if header.php provides a skip link, other pages inherit it
+        header_has_skip = False
+        for hpath, hfc in iter_files(ctx, PHP_EXTENSIONS):
+            if "includes/header" not in hpath and "include/header" not in hpath:
                 continue
-            first = first_a_per_file.get(path)
-            if first is None:
-                continue
-            line, href = first
-            if not href.startswith("#"):
-                findings.append(self._finding(
-                    check_id="skip-link",
-                    severity=Severity.SERIOUS,
-                    wcag="2.4.1",
-                    wcag_name="Bypass Blocks",
-                    message="First <a> element is not a skip link",
-                    file=path,
-                    line=line,
-                    element=f'<a href="{href}">',
-                    fix='Add a skip link as the first element: <a href="#main">Skip to content</a>',
-                    impact=("blind", "motor"),
-                ))
+            for helem in hfc.elements:
+                if helem.tag.lower() != "a":
+                    continue
+                hhref = str(helem.attributes.get("href", ""))
+                hcls = str(helem.attributes.get("class", "")).lower()
+                if hhref.startswith("#") or "skip" in hcls:
+                    header_has_skip = True
+                    break
+
+        if not header_has_skip:
+            for path, fc in iter_files(ctx, PHP_EXTENSIONS):
+                if "includes/" in path or "include/" in path:
+                    continue
+                first = first_a_per_file.get(path)
+                if first is None:
+                    continue
+                line, href = first
+                if not href.startswith("#"):
+                    findings.append(self._finding(
+                        check_id="skip-link",
+                        severity=Severity.SERIOUS,
+                        wcag="2.4.1",
+                        wcag_name="Bypass Blocks",
+                        message="First <a> element is not a skip link",
+                        file=path,
+                        line=line,
+                        element=f'<a href="{href}">',
+                        fix='Add a skip link as the first element: <a href="#main">Skip to content</a>',
+                        impact=("blind", "motor"),
+                    ))
 
         # page-title
         if not has_title:
