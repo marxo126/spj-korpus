@@ -7,7 +7,7 @@ require_once __DIR__ . '/../includes/config.php';
 require_once __DIR__ . '/../includes/admin_auth.php';
 require_researcher();
 
-$allowed_tabs = is_admin() ? ['words', 'themes', 'videos', 'users', 'logs', 'stats'] : ['videos', 'stats'];
+$allowed_tabs = is_admin() ? ['words', 'themes', 'videos', 'users', 'logs', 'stats', 'metrics'] : ['videos', 'stats'];
 $tab = $_GET['tab'] ?? $allowed_tabs[0];
 if (!in_array($tab, $allowed_tabs)) $tab = $allowed_tabs[0];
 
@@ -28,6 +28,9 @@ require_once __DIR__ . '/../includes/header.php';
     <a href="/admin/?tab=logs" class="admin-tab <?= $tab === 'logs' ? 'active' : '' ?>">Logy</a>
     <?php endif; ?>
     <a href="/admin/?tab=stats" class="admin-tab <?= $tab === 'stats' ? 'active' : '' ?>">Štatistiky</a>
+    <?php if (is_admin()): ?>
+    <a href="/admin/?tab=metrics" class="admin-tab <?= $tab === 'metrics' ? 'active' : '' ?>">Metriky</a>
+    <?php endif; ?>
 </div>
 
 <?php
@@ -49,6 +52,9 @@ switch ($tab) {
         break;
     case 'stats':
         require __DIR__ . '/stats.php';
+        break;
+    case 'metrics':
+        require __DIR__ . '/metrics.php';
         break;
 }
 ?>

@@ -796,6 +796,297 @@ def spj_harvest_eaf() -> dict:
         return {"status": "error", "message": str(exc)}
 
 
+# ===========================================================================
+# Collector App Tools (MySQL via Docker)
+# ===========================================================================
+
+
+@mcp.tool()
+def spj_collector_status() -> dict:
+    """Get collector app status: word/theme/recording/user counts.
+
+    Connects to the collector's MySQL database (Docker on port 3307 by default).
+    Shows total words, themes, recordings by status, active users, and today's activity.
+    """
+    try:
+        from spj.collector_db import get_status, get_coverage
+
+        status = get_status()
+        coverage = get_coverage()
+        return {"status": "ok", **status, "coverage": coverage}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_themes() -> dict:
+    """List all collector themes with word counts and recording totals.
+
+    Returns each theme's name, emoji, word count, and total recordings.
+    """
+    try:
+        from spj.collector_db import get_themes
+
+        themes = get_themes()
+        return {"status": "ok", "themes": themes, "count": len(themes)}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_words(
+    theme_id: int | None = None,
+    search: str | None = None,
+    limit: int = 50,
+) -> dict:
+    """List collector words with optional filtering.
+
+    Args:
+        theme_id: Filter by theme ID (optional)
+        search: Search in word_sk or gloss_id (optional)
+        limit: Max results (default 50)
+    """
+    try:
+        from spj.collector_db import get_words
+
+        words = get_words(theme_id=theme_id, search=search, limit=limit)
+        return {"status": "ok", "words": words, "count": len(words)}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_recordings(
+    status_filter: str | None = "pending",
+    theme_id: int | None = None,
+    limit: int = 20,
+) -> dict:
+    """List collector recordings with filters.
+
+    Args:
+        status_filter: Filter by status: pending, approved, rejected, or None for all
+        theme_id: Filter by theme ID (optional)
+        limit: Max results (default 20)
+    """
+    try:
+        from spj.collector_db import get_recordings
+
+        recs = get_recordings(
+            status=status_filter, theme_id=theme_id, limit=limit
+        )
+        return {"status": "ok", "recordings": recs, "count": len(recs)}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_add_word(
+    gloss_id: str,
+    word_sk: str,
+    theme_id: int | None = None,
+    link_posunky: str | None = None,
+    link_dictio: str | None = None,
+) -> dict:
+    """Add a word to the collector database.
+
+    Args:
+        gloss_id: Uppercase gloss ID (e.g. 'VODA-1')
+        word_sk: Slovak word (e.g. 'voda')
+        theme_id: Theme ID to assign to (optional)
+        link_posunky: URL to posunky.sk reference (optional)
+        link_dictio: URL to dictio.info reference (optional)
+    """
+    try:
+        from spj.collector_db import add_word
+
+        sign_id = add_word(
+            gloss_id=gloss_id,
+            word_sk=word_sk,
+            theme_id=theme_id,
+            link_posunky=link_posunky,
+            link_dictio=link_dictio,
+        )
+        return {"status": "ok", "sign_id": sign_id, "gloss_id": gloss_id}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_add_theme(
+    name: str,
+    emoji: str = "",
+    sort_order: int = 0,
+) -> dict:
+    """Add a new theme to the collector.
+
+    Args:
+        name: Theme name in Slovak (e.g. 'Jedlo a nápoje')
+        emoji: Emoji icon (e.g. '🍞')
+        sort_order: Display order (0 = auto)
+    """
+    try:
+        from spj.collector_db import add_theme
+
+        theme_id = add_theme(name=name, emoji=emoji, sort_order=sort_order)
+        return {"status": "ok", "theme_id": theme_id, "name": name}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_bulk_import(
+    words_csv: str,
+    theme_name: str | None = None,
+    theme_id: int | None = None,
+) -> dict:
+    """Bulk import words from CSV text into the collector.
+
+    Args:
+        words_csv: CSV text with lines of 'gloss_id,word_sk' (one per line).
+                   Optional extra columns: link_posunky, link_dictio
+        theme_name: Create or find theme by name and assign all words to it
+        theme_id: Assign all words to this existing theme ID
+    """
+    try:
+        import csv
+        import io
+
+        from spj.collector_db import add_word, add_theme, query
+
+        # Resolve theme
+        tid = theme_id
+        if theme_name and not tid:
+            existing = query(
+                "SELECT id FROM themes WHERE name = %s", (theme_name,)
+            )
+            if existing:
+                tid = existing[0]["id"]
+            else:
+                tid = add_theme(name=theme_name)
+
+        reader = csv.reader(io.StringIO(words_csv))
+        imported = 0
+        skipped = 0
+        errors = []
+
+        for row in reader:
+            if len(row) < 2:
+                continue
+            gloss_id = row[0].strip()
+            word_sk = row[1].strip()
+            link_p = row[2].strip() if len(row) > 2 else None
+            link_d = row[3].strip() if len(row) > 3 else None
+
+            if not gloss_id or not word_sk:
+                skipped += 1
+                continue
+
+            try:
+                add_word(gloss_id, word_sk, tid, link_p or None, link_d or None)
+                imported += 1
+            except Exception as e:
+                skipped += 1
+                if len(errors) < 5:
+                    errors.append(f"{gloss_id}: {e}")
+
+        return {
+            "status": "ok",
+            "imported": imported,
+            "skipped": skipped,
+            "theme_id": tid,
+            "sample_errors": errors,
+        }
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_coverage() -> dict:
+    """Get recording coverage stats and words most in need of recordings.
+
+    Shows coverage breakdown (50+, 20-49, 10-19, <10) and the top 20 words
+    with the biggest gap between current and target recordings.
+    """
+    try:
+        from spj.collector_db import get_coverage, get_words_needing_recordings
+
+        coverage = get_coverage()
+        needed = get_words_needing_recordings(min_gap=1, limit=20)
+        return {
+            "status": "ok",
+            "coverage": coverage,
+            "most_needed": needed,
+        }
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_leaderboard(limit: int = 10) -> dict:
+    """Get top contributors leaderboard from the collector.
+
+    Args:
+        limit: Number of top users to show (default 10)
+    """
+    try:
+        from spj.collector_db import get_top_contributors
+
+        users = get_top_contributors(limit=limit)
+        return {"status": "ok", "users": users}
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
+@mcp.tool()
+def spj_collector_sync_glossary() -> dict:
+    """Sync collector words with the ML pipeline glossary.
+
+    Compares words in the collector database against the ML training manifests
+    and glossary. Reports which collector words already have training data
+    and which are new (need recordings).
+    """
+    try:
+        import pandas as pd
+
+        from spj.collector_db import get_words
+
+        words = get_words(limit=10000)
+        gloss_ids = {w["gloss_id"] for w in words}
+
+        # Check against training manifests
+        manifest_dir = DATA_DIR / "training"
+        training_labels: set[str] = set()
+        for mf in manifest_dir.glob("manifest_*.csv"):
+            try:
+                df = pd.read_csv(mf, dtype=str, usecols=["label"])
+                training_labels.update(df["label"].dropna().unique())
+            except Exception:
+                pass
+
+        matched = gloss_ids & training_labels
+        unmatched = gloss_ids - training_labels
+
+        return {
+            "status": "ok",
+            "collector_words": len(gloss_ids),
+            "with_training_data": len(matched),
+            "without_training_data": len(unmatched),
+            "new_words_sample": sorted(unmatched)[:30],
+        }
+
+    except Exception as exc:
+        return {"status": "error", "message": str(exc)}
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------

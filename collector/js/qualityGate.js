@@ -118,8 +118,12 @@ const QualityGate = {
                 }
             } catch (e) { /* ignore */ }
 
-            // Brightness check
-            const pixels = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+            // Brightness check — center 60% of frame (where signer is)
+            const bx = Math.floor(canvas.width * 0.2);
+            const by = Math.floor(canvas.height * 0.1);
+            const bw = Math.floor(canvas.width * 0.6);
+            const bh = Math.floor(canvas.height * 0.8);
+            const pixels = ctx.getImageData(bx, by, bw, bh).data;
             const step = 16;
             let sum = 0;
             const count = Math.floor(pixels.length / step);
@@ -127,7 +131,7 @@ const QualityGate = {
                 sum += 0.299 * pixels[i] + 0.587 * pixels[i + 1] + 0.114 * pixels[i + 2];
             }
             const avg = sum / count;
-            if (avg >= 60 && avg <= 220) brightnessOkCount++;
+            if (avg >= 45 && avg <= 220) brightnessOkCount++;
         }
 
         URL.revokeObjectURL(video.src);

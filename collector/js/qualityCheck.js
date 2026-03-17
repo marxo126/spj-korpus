@@ -94,7 +94,7 @@ class QualityChecker {
             contrast: true
         };
 
-        // 1. Brightness check
+        // 1. Brightness check (center 60% of frame — avoids false "dark" on dark backgrounds)
         status.light = this.checkBrightness();
 
         // 2. Low contrast check
@@ -116,7 +116,7 @@ class QualityChecker {
             }
         }
 
-        // 3. Face detection
+        // 4. Face detection
         if (this.faceDetector) {
             try {
                 const faceResult = this.faceDetector.detectForVideo(this.video, performance.now());
@@ -146,10 +146,18 @@ class QualityChecker {
     }
 
     checkBrightness() {
-        const pixels = this.ctx.getImageData(0, 0, this.canvas.width, this.canvas.height).data;
+        // Sample center 60% of frame where the signer is (not full frame)
+        const w = this.canvas.width;
+        const h = this.canvas.height;
+        const x0 = Math.floor(w * 0.2);
+        const y0 = Math.floor(h * 0.1);
+        const rw = Math.floor(w * 0.6);
+        const rh = Math.floor(h * 0.8);
+
+        const pixels = this.ctx.getImageData(x0, y0, rw, rh).data;
         let sum = 0;
         let clipped = 0;
-        const step = 16; // sample every 4th pixel (RGBA = 4 bytes × 4 skip)
+        const step = 16;
         const count = Math.floor(pixels.length / step);
 
         for (let i = 0; i < pixels.length; i += step) {
@@ -161,10 +169,7 @@ class QualityChecker {
         const avg = sum / count;
         const clippedRatio = clipped / count;
 
-        // Store for contrast check
-        this._lastLumValues = { sum, count, pixels, step };
-
-        if (avg < 60) return 'dark';
+        if (avg < 45) return 'dark';
         if (avg > 220 || clippedRatio > 0.3) return 'bright';
         return 'ok';
     }
@@ -184,6 +189,6 @@ class QualityChecker {
 
         const mean = sum / count;
         const stddev = Math.sqrt(sumSq / count - mean * mean);
-        return stddev >= 20; // false = low contrast
+        return stddev >= 20;
     }
 }

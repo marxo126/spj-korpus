@@ -33,6 +33,10 @@ define('VOTES_TO_REJECT', 2);
 // Storage monitoring
 define('STORAGE_LIMIT_GB', 18); // leaves 2 GB headroom for app files and DB
 
+// Analytics
+define('ANALYTICS_SALT', getenv('ANALYTICS_SALT') ?: 'spj_collector_20260316');
+define('ANALYTICS_RETENTION_DAYS', 90);
+
 // Google OAuth (fill in your credentials)
 define('GOOGLE_CLIENT_ID', '');
 define('GOOGLE_CLIENT_SECRET', '');

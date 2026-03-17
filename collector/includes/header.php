@@ -5,6 +5,8 @@
 
 require_once __DIR__ . '/auth.php';
 require_once __DIR__ . '/admin_auth.php';
+require_once __DIR__ . '/analytics.php';
+analytics_start_timer();
 start_session();
 
 $current_page = basename($_SERVER['SCRIPT_NAME'], '.php');
@@ -77,3 +79,4 @@ $user = $logged_in ? get_user() : null;
     </script>
 
     <main class="page-content" id="main-content">
+<?php track_page_view(); ?>
