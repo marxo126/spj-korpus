@@ -60,7 +60,7 @@ require_once __DIR__ . '/includes/header.php';
         <div class="consent-card">
             <div class="checkbox-group">
                 <span class="consent-icon">👤</span>
-                <input type="checkbox" id="gdpr-service" name="consent_service" required>
+                <input type="checkbox" id="gdpr-service" name="consent_service" required aria-required="true">
                 <label for="gdpr-service" class="consent-text">Môj účet a osobné údaje</label>
             </div>
             <p class="consent-detail">Súhlasím, že moje údaje (email, meno, škola, mesto, vek) sa použijú na vytvorenie účtu a výskum.</p>
@@ -69,7 +69,7 @@ require_once __DIR__ . '/includes/header.php';
         <div class="consent-card">
             <div class="checkbox-group">
                 <span class="consent-icon">📹</span>
-                <input type="checkbox" id="gdpr-biometric" name="consent_biometric" required>
+                <input type="checkbox" id="gdpr-biometric" name="consent_biometric" required aria-required="true">
                 <label for="gdpr-biometric" class="consent-text">Video s mojou tvárou</label>
             </div>
             <p class="consent-detail">Súhlasím s nahrávaním videa, kde je vidieť moju tvár a ruky. Viem, že tvár = biometrické údaje.</p>
@@ -78,7 +78,7 @@ require_once __DIR__ . '/includes/header.php';
         <div class="consent-card">
             <div class="checkbox-group">
                 <span class="consent-icon">🔬</span>
-                <input type="checkbox" id="gdpr-retention" name="consent_retention" required>
+                <input type="checkbox" id="gdpr-retention" name="consent_retention" required aria-required="true">
                 <label for="gdpr-retention" class="consent-text">Videá zostanú vo výskume</label>
             </div>
             <p class="consent-detail">Aj keď zmažem účet, anonymizované videá a pohybové dáta zostanú v korpuse SPJ na výskum.</p>

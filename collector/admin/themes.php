@@ -22,7 +22,7 @@ $themes = $pdo->query("
         <div class="form-row">
             <div class="form-group">
                 <label>Názov</label>
-                <input type="text" name="name" placeholder="Jedlo a nápoje" required aria-label="Názov témy">
+                <input type="text" name="name" placeholder="Jedlo a nápoje" required aria-required="true" autocomplete="off" aria-label="Názov témy">
             </div>
             <div class="form-group" style="max-width:100px;">
                 <label>Emoji</label>

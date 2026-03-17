@@ -76,8 +76,8 @@ require_once __DIR__ . '/includes/header.php';
             <video id="camera-preview" autoplay playsinline muted aria-label="Náhľad kamery"></video>
             <div class="camera-banner ok" id="camera-banner">✅ Pripravené na nahrávanie</div>
             <button class="help-btn" onclick="FramingGuide.showHelp()" title="Návod" aria-label="Návod na nahrávanie">?</button>
-            <div class="countdown-overlay" id="countdown-overlay" style="display: none;">
-                <div class="countdown-num" id="countdown-num">3</div>
+            <div class="countdown-overlay" id="countdown-overlay" role="timer" aria-label="Odpocet pred nahrávaním" style="display: none;">
+                <div class="countdown-num" id="countdown-num" aria-live="off">3</div>
             </div>
             <div class="recording-indicator" id="recording-indicator" role="status" aria-live="assertive" style="display: none;">
                 <div class="rec-dot"></div>

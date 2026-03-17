@@ -488,9 +488,9 @@ Kontakt na zodpovednú osobu: <a href="mailto:data@spj.sk" style="color:var(--bl
 <h3 style="margin: 20px 0 8px; color: var(--dark);">2. Účel a právny základ spracúvania</h3>
 <table style="width:100%; border-collapse:collapse; margin:8px 0; font-size:13px;">
 <tr style="border-bottom:2px solid var(--light-gray); text-align:left;">
-    <th style="padding:8px;">Účel</th>
-    <th style="padding:8px;">Právny základ</th>
-    <th style="padding:8px;">Kategórie údajov</th>
+    <th scope="col" style="padding:8px;">Účel</th>
+    <th scope="col" style="padding:8px;">Právny základ</th>
+    <th scope="col" style="padding:8px;">Kategórie údajov</th>
 </tr>
 <tr style="border-bottom:1px solid var(--light-gray);">
     <td style="padding:8px;">Vytvorenie a správa používateľského účtu</td>

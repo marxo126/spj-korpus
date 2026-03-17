@@ -201,9 +201,9 @@ Kontakt: <a href="mailto:data@spj.sk" style="color:var(--blue)">data@spj.sk</a><
 
 <table style="width:100%; border-collapse:collapse; margin:8px 0; font-size:13px;">
 <tr style="border-bottom:2px solid var(--light-gray); text-align:left;">
-    <th style="padding:8px;">Nedostatok</th>
-    <th style="padding:8px;">Kritérium WCAG</th>
-    <th style="padding:8px;">Stav</th>
+    <th scope="col" style="padding:8px;">Nedostatok</th>
+    <th scope="col" style="padding:8px;">Kritérium WCAG</th>
+    <th scope="col" style="padding:8px;">Stav</th>
 </tr>
 <tr style="border-bottom:1px solid var(--light-gray);">
     <td style="padding:8px;">Ovládanie natívneho prehrávača videa klávesnicou je obmedzené</td>

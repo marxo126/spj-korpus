@@ -53,12 +53,12 @@ require_once __DIR__ . '/includes/header.php';
 
     <?php elseif (isset($resent) && $resent): ?>
     <div style="font-size: 64px; margin-bottom: 16px;">📧</div>
-    <h1>Email odoslaný!</h1>
+    <h2>Email odoslaný!</h2>
     <p style="color: var(--gray); margin: 12px 0 24px;">Skontrolujte svoju schránku (aj spam). Odkaz je platný 24 hodín.</p>
 
     <?php else: ?>
     <div style="font-size: 64px; margin-bottom: 16px;">⚠️</div>
-    <h1>Overenie zlyhalo</h1>
+    <h2>Overenie zlyhalo</h2>
     <p style="color: var(--gray); margin: 12px 0 24px;"><?= htmlspecialchars($error) ?></p>
     <?php if (is_logged_in() && !is_email_verified()): ?>
     <form method="POST" style="margin-top: 16px;">

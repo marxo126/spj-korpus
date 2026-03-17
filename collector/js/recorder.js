@@ -457,6 +457,7 @@ function resetToCamera() {
     document.getElementById('record-controls').style.display = 'block';
     document.getElementById('record-btn').className = 'record-btn';
     document.getElementById('record-btn').onclick = startRecording;
+    document.getElementById('record-btn').focus();
 }
 
 function isValidHttpUrl(url) {

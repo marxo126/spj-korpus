@@ -238,12 +238,12 @@ require_once __DIR__ . '/includes/header.php';
         <?= csrf_field() ?>
         <div class="form-group">
             <label for="email">Email</label>
-            <input type="email" id="email" name="email" placeholder="vas@email.sk" required autocomplete="email"
+            <input type="email" id="email" name="email" placeholder="vas@email.sk" required aria-required="true" autocomplete="email"
                    value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
         </div>
         <div class="form-group">
             <label for="password">Heslo</label>
-            <input type="password" id="password" name="password" placeholder="••••••••" required autocomplete="current-password">
+            <input type="password" id="password" name="password" placeholder="••••••••" required aria-required="true" autocomplete="current-password">
         </div>
         <button type="submit" class="btn btn-blue" style="margin-bottom: 8px;">Prihlásiť sa</button>
     </form>
@@ -279,16 +279,16 @@ require_once __DIR__ . '/includes/header.php';
 
         <div class="form-group">
             <label for="reg-email">Email <span class="req">*</span></label>
-            <input type="email" id="reg-email" name="email" placeholder="vas@email.sk" required autocomplete="email"
+            <input type="email" id="reg-email" name="email" placeholder="vas@email.sk" required aria-required="true" autocomplete="email"
                    value="<?= htmlspecialchars($_POST['email'] ?? '') ?>">
         </div>
         <div class="form-group">
             <label for="reg-password">Heslo <span class="req">*</span></label>
-            <input type="password" id="reg-password" name="password" placeholder="Aspoň 8 znakov" required minlength="8" autocomplete="new-password">
+            <input type="password" id="reg-password" name="password" placeholder="Aspoň 8 znakov" required aria-required="true" minlength="8" autocomplete="new-password">
         </div>
         <div class="form-group">
             <label for="reg-password2">Heslo znova <span class="req">*</span></label>
-            <input type="password" id="reg-password2" name="password2" placeholder="Zopakujte heslo" required minlength="8" autocomplete="new-password">
+            <input type="password" id="reg-password2" name="password2" placeholder="Zopakujte heslo" required aria-required="true" minlength="8" autocomplete="new-password">
         </div>
         <script>
         document.getElementById('reg-password2')?.addEventListener('input', function() {
@@ -302,7 +302,7 @@ require_once __DIR__ . '/includes/header.php';
         </script>
         <div class="form-group">
             <label for="display-name">Meno <span class="req">*</span></label>
-            <input type="text" id="display-name" name="display_name" placeholder="napr. Janka" required autocomplete="name"
+            <input type="text" id="display-name" name="display_name" placeholder="napr. Janka" required aria-required="true" autocomplete="name"
                    value="<?= htmlspecialchars($_POST['display_name'] ?? '') ?>">
         </div>
 
@@ -312,13 +312,13 @@ require_once __DIR__ . '/includes/header.php';
 
         <div class="form-group">
             <label for="school">Škola pre nepočujúcich <span class="req">*</span></label>
-            <input type="text" id="school" name="school" placeholder="napr. Kremnica, Bratislava, Lučenec..." required
+            <input type="text" id="school" name="school" placeholder="napr. Kremnica, Bratislava, Lučenec..." required aria-required="true"
                    value="<?= htmlspecialchars($_POST['school'] ?? '') ?>">
             <span style="font-size: 12px; color: var(--gray);">Ak ste navštevovali — ovplyvňuje štýl posunkovania a dialekt.</span>
         </div>
         <div class="form-group">
             <label for="location">Mesto / región <span class="req">*</span></label>
-            <input type="text" id="location" name="location" placeholder="napr. Bratislava" required
+            <input type="text" id="location" name="location" placeholder="napr. Bratislava" required aria-required="true"
                    value="<?= htmlspecialchars($_POST['location'] ?? '') ?>">
         </div>
         <div class="form-group">
@@ -326,7 +326,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="radio-group">
                 <?php foreach (['under_18' => 'do 18', '18-25' => '18–25', '26-35' => '26–35', '36-50' => '36–50', '50+' => '50+'] as $val => $label): ?>
                 <label>
-                    <input type="radio" name="age_range" value="<?= $val ?>" required
+                    <input type="radio" name="age_range" value="<?= $val ?>" required aria-required="true"
                         <?= ($_POST['age_range'] ?? '') === $val ? 'checked' : '' ?>>
                     <?= $label ?>
                 </label>
@@ -348,7 +348,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="radio-group">
                 <?php foreach (['woman' => 'Žena', 'man' => 'Muž', 'neutral' => 'Neuvádzam'] as $val => $label): ?>
                 <label>
-                    <input type="radio" name="gender" value="<?= $val ?>" required
+                    <input type="radio" name="gender" value="<?= $val ?>" required aria-required="true"
                         <?= ($_POST['gender'] ?? '') === $val ? 'checked' : '' ?>>
                     <?= $label ?>
                 </label>
@@ -385,7 +385,7 @@ require_once __DIR__ . '/includes/header.php';
         <div class="form-group" id="public-name-field"
              style="display: <?= isset($_POST['show_public_name']) ? 'block' : 'none' ?>;">
             <label for="public-name">Meno na stránke</label>
-            <input type="text" id="public-name" name="public_name" placeholder="napr. Janka M."
+            <input type="text" id="public-name" name="public_name" placeholder="napr. Janka M." autocomplete="name"
                    value="<?= htmlspecialchars($_POST['public_name'] ?? '') ?>">
         </div>
 
@@ -396,7 +396,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="consent-card">
                 <div class="checkbox-group">
                     <span class="consent-icon">👤</span>
-                    <input type="checkbox" id="gdpr-service" name="consent_service" required>
+                    <input type="checkbox" id="gdpr-service" name="consent_service" required aria-required="true">
                     <label for="gdpr-service" class="consent-text">Môj účet a osobné údaje</label>
                 </div>
                 <p class="consent-detail">Súhlasím, že moje údaje (email, meno, škola, mesto, vek) sa použijú na vytvorenie účtu a výskum.</p>
@@ -405,7 +405,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="consent-card">
                 <div class="checkbox-group">
                     <span class="consent-icon">📹</span>
-                    <input type="checkbox" id="gdpr-biometric" name="consent_biometric" required>
+                    <input type="checkbox" id="gdpr-biometric" name="consent_biometric" required aria-required="true">
                     <label for="gdpr-biometric" class="consent-text">Video s mojou tvárou</label>
                 </div>
                 <p class="consent-detail">Súhlasím s nahrávaním videa, kde je vidieť moju tvár a ruky. Viem, že tvár = biometrické údaje.</p>
@@ -414,7 +414,7 @@ require_once __DIR__ . '/includes/header.php';
             <div class="consent-card">
                 <div class="checkbox-group">
                     <span class="consent-icon">🔬</span>
-                    <input type="checkbox" id="gdpr-retention" name="consent_retention" required>
+                    <input type="checkbox" id="gdpr-retention" name="consent_retention" required aria-required="true">
                     <label for="gdpr-retention" class="consent-text">Videá zostanú vo výskume</label>
                 </div>
                 <p class="consent-detail">Aj keď zmažem účet, anonymizované videá a pohybové dáta zostanú v korpuse SPJ na výskum.</p>

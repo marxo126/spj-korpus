@@ -82,7 +82,7 @@ require_once __DIR__ . '/includes/header.php';
 
         <div class="form-group">
             <label>Meno</label>
-            <input type="text" name="display_name" value="<?= htmlspecialchars($user['display_name'] ?? '') ?>" aria-label="Meno">
+            <input type="text" name="display_name" value="<?= htmlspecialchars($user['display_name'] ?? '') ?>" autocomplete="name" aria-label="Meno">
         </div>
 
         <div class="form-group">
@@ -135,7 +135,7 @@ require_once __DIR__ . '/includes/header.php';
              style="display: <?= $user['show_public_name'] ? 'block' : 'none' ?>;">
             <label>Meno na stránke</label>
             <input type="text" name="public_name" value="<?= htmlspecialchars($user['public_name'] ?? '') ?>"
-                   placeholder="napr. Janka M." aria-label="Meno na stránke">
+                   placeholder="napr. Janka M." autocomplete="name" aria-label="Meno na stránke">
         </div>
 
         <button type="submit" class="btn btn-blue" style="margin-top: 16px;">Uložiť zmeny</button>

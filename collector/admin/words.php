@@ -64,11 +64,11 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
         <div class="form-row">
             <div class="form-group">
                 <label>Gloss ID</label>
-                <input type="text" name="gloss_id" placeholder="VODA-1" required pattern="[A-Z0-9_-]+" aria-label="Gloss ID">
+                <input type="text" name="gloss_id" placeholder="VODA-1" required aria-required="true" pattern="[A-Z0-9_-]+" aria-label="Gloss ID">
             </div>
             <div class="form-group">
                 <label>Slovensky</label>
-                <input type="text" name="word_sk" placeholder="voda" required aria-label="Slovensky">
+                <input type="text" name="word_sk" placeholder="voda" required aria-required="true" aria-label="Slovensky">
             </div>
             <div class="form-group">
                 <label>Téma</label>
@@ -102,7 +102,7 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
         <p style="font-size:13px;color:var(--gray);margin-bottom:8px;">
             Formát: gloss_id, word_sk, theme_name, link_posunky, link_dictio (max 500 riadkov)
         </p>
-        <input type="file" name="csv_file" accept=".csv" required aria-label="CSV súbor na import" style="margin-bottom:10px;">
+        <input type="file" name="csv_file" accept=".csv" required aria-required="true" aria-label="CSV súbor na import" style="margin-bottom:10px;">
         <button type="submit" class="btn btn-gray" style="width:auto;padding:10px 24px;">Importovať</button>
     </form>
 </details>
@@ -176,11 +176,11 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
             <?= csrf_field() ?>
             <div class="form-group">
                 <label>Gloss ID</label>
-                <input type="text" name="gloss_id" id="edit-gloss-id" required aria-label="Gloss ID">
+                <input type="text" name="gloss_id" id="edit-gloss-id" required aria-required="true" aria-label="Gloss ID">
             </div>
             <div class="form-group">
                 <label>Slovensky</label>
-                <input type="text" name="word_sk" id="edit-word-sk" required aria-label="Slovensky">
+                <input type="text" name="word_sk" id="edit-word-sk" required aria-required="true" aria-label="Slovensky">
             </div>
             <div class="form-group">
                 <label>Téma</label>
@@ -201,7 +201,7 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
             </div>
             <div style="display:flex;gap:10px;">
                 <button type="submit" class="btn btn-blue" style="flex:1;">Uložiť</button>
-                <button type="button" class="btn btn-gray" style="flex:1;" onclick="document.getElementById('edit-modal').style.display='none'">Zrušiť</button>
+                <button type="button" class="btn btn-gray" style="flex:1;" onclick="document.getElementById('edit-modal').style.display='none'; if(window._editTrigger) window._editTrigger.focus();">Zrušiť</button>
             </div>
         </form>
     </div>
@@ -211,6 +211,7 @@ $themes = $pdo->query('SELECT id, name, emoji FROM themes ORDER BY sort_order AS
 document.addEventListener('click', function(e) {
     var btn = e.target.closest('.edit-btn');
     if (!btn) return;
+    window._editTrigger = btn;
     var data = JSON.parse(btn.dataset.sign);
     document.getElementById('edit-sign-id').value = data.id;
     document.getElementById('edit-gloss-id').value = data.gloss_id;

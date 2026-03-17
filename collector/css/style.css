@@ -225,7 +225,7 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
 }
 .form-group .radio-group input[type="radio"] {
     width: auto;
-    margin: 0;
+    margin: 4px;
 }
 .form-group .radio-group label:has(input:checked) {
     border-color: var(--blue);
@@ -238,6 +238,13 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
     color: var(--red);
     font-weight: 700;
     margin-left: 2px;
+}
+.form-group label:has(+ input[required])::after,
+.form-group label:has(+ select[required])::after,
+.form-group label:has(+ textarea[required])::after {
+    content: " *";
+    color: var(--red);
+    font-weight: 700;
 }
 
 .checkbox-group {
@@ -807,7 +814,7 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
 .admin-table tr:hover { background: #F3F4F6; }
 .admin-actions { display: flex; gap: 6px; }
 .admin-actions button, .admin-actions a {
-    padding: 4px 10px;
+    padding: 8px 12px;
     border-radius: 6px;
     font-size: 0.875rem;
     font-weight: 600;
@@ -816,6 +823,9 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
     color: var(--dark);
     cursor: pointer;
     text-decoration: none;
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
 }
 .admin-actions .delete { color: var(--red); border-color: var(--red); }
 
