@@ -245,13 +245,26 @@ class CollectorRule(BaseRule):
     def _check_offline_notification(self, ctx) -> list[Finding]:
         """Offline/retry patterns should announce to assistive tech."""
         findings: list[Finding] = []
+        # Also check if PHP templates have aria-live regions for toasts/status
+        has_template_announce = False
+        for p, fc2, elem in iter_elements(ctx):
+            aria_live = elem.attributes.get("aria-live")
+            role = str(elem.attributes.get("role", "")).lower()
+            if aria_live or role in ("status", "alert"):
+                cls = str(elem.attributes.get("class", "")).lower()
+                eid = str(elem.attributes.get("id", "")).lower()
+                if any(kw in cls + " " + eid for kw in ("toast", "announce", "notification", "recording")):
+                    has_template_announce = True
+                    break
+
         for path, fc in iter_files(ctx, JS_EXTENSIONS):
             content = fc.content
             if not _OFFLINE_PATTERN.search(content):
                 continue
-            # Check if there's an aria-live or role=alert nearby
+            # Check if there's an aria-live or role=alert in JS or in templates
             has_announce = (
-                "aria-live" in content
+                has_template_announce
+                or "aria-live" in content
                 or 'role="alert"' in content
                 or "role='alert'" in content
                 or 'role="status"' in content

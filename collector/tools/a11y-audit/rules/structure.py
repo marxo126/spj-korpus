@@ -1,6 +1,8 @@
 """WCAG 1.3.1 / 1.3.2 / 2.4.1-6 — Document structure rules."""
 from __future__ import annotations
 
+import re
+
 from rules.base import BaseRule, Finding, Severity
 from rules.helpers import iter_elements, iter_files
 from parsers.models import PHP_EXTENSIONS
@@ -205,11 +207,26 @@ class StructureRule(BaseRule):
         return findings
 
     def _check_list_structure(self, ctx) -> list[Finding]:
+        _LAYOUT_CLASSES = re.compile(
+            r"\b(grid|cards|row|container|wrapper|content|layout|stats|"
+            r"scores|actions|filter|form-row|record-layout|col-|"
+            r"validate-btns|status-row|checkbox-group|radio-group)\b",
+            re.IGNORECASE,
+        )
         findings: list[Finding] = []
         for path, fc, elem in iter_elements(ctx):
             if elem.tag not in ("div", "span"):
                 continue
             if len(elem.children) < 3:
+                continue
+            # Skip containers with layout/grid class names
+            parent_cls = str(elem.attributes.get("class", ""))
+            parent_style = str(elem.attributes.get("style", ""))
+            if _LAYOUT_CLASSES.search(parent_cls):
+                continue
+            # Skip containers with inline flex/grid styles (ad-hoc layouts)
+            if any(kw in parent_style for kw in ("display: flex", "display: grid",
+                                                   "display:flex", "display:grid")):
                 continue
             # Check if children share the same class (list-like pattern)
             child_classes = [str(c.attributes.get("class", "")) for c in elem.children]
@@ -217,6 +234,7 @@ class StructureRule(BaseRule):
             if len(child_classes) >= 3:
                 first = child_classes[0]
                 if all(c == first for c in child_classes):
+                    # Skip if children have different tags (not a uniform list)
                     child_tags = {c.tag for c in elem.children}
                     if child_tags.issubset({"div", "span", "a", "p"}):
                         findings.append(self._finding(

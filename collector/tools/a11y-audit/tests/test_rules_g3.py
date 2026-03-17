@@ -76,10 +76,21 @@ class TestMotionRule:
         prm = [f for f in findings if f.check_id == "prefers-reduced-motion"]
         assert len(prm) == 0
 
-    def test_infinite_animation(self):
+    def test_infinite_animation_with_reduced_motion(self):
+        """Infinite animation is OK when prefers-reduced-motion is handled."""
         ctx = _ctx(css_kwargs={
             "keyframes": [KeyframeAnimation(name="spin", duration_ms=1000, iteration_count="infinite", line=10)],
             "has_prefers_reduced_motion": True,
+        })
+        findings = self.rule.check(ctx, {})
+        ad = [f for f in findings if f.check_id == "animation-duration"]
+        assert len(ad) == 0
+
+    def test_infinite_animation_without_reduced_motion(self):
+        """Infinite animation is flagged when no prefers-reduced-motion."""
+        ctx = _ctx(css_kwargs={
+            "keyframes": [KeyframeAnimation(name="spin", duration_ms=1000, iteration_count="infinite", line=10)],
+            "has_prefers_reduced_motion": False,
         })
         findings = self.rule.check(ctx, {})
         ad = [f for f in findings if f.check_id == "animation-duration"]

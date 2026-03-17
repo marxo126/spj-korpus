@@ -16,6 +16,8 @@ _AUTOCOMPLETE_FIELDS = {
     "name": "name",
     "username": "username",
 }
+_REQUIRED_WORDS = ("*", "required", "povinné", "povinný", "povinne",
+                   "povinny", "povinná", "povinna")
 _ERROR_CLASSES = re.compile(r"\b(error|invalid|danger|alert-danger|form-error)\b", re.IGNORECASE)
 _CAPTCHA_PATTERN = re.compile(r"\b(captcha|recaptcha|hcaptcha|g-recaptcha)\b", re.IGNORECASE)
 
@@ -140,7 +142,7 @@ class FormsRule(BaseRule):
                 ))
                 continue
 
-            # Check name-based
+            # Check name-based — skip if autocomplete="off" is explicit
             if input_type == "text" and not autocomplete:
                 for keyword, ac_val in _AUTOCOMPLETE_FIELDS.items():
                     if keyword in input_name:
@@ -219,8 +221,6 @@ class FormsRule(BaseRule):
                 pass
 
             # Check for common required indicators in any associated text
-            _REQUIRED_WORDS = ("*", "required", "povinné", "povinný", "povinne",
-                               "povinny", "povinná", "povinna")
             has_indicator = False
             for txt in indicator_texts:
                 txt_lower = txt.lower()
@@ -228,6 +228,10 @@ class FormsRule(BaseRule):
                        for w in _REQUIRED_WORDS):
                     has_indicator = True
                     break
+
+            # aria-required="true" is a valid programmatic indicator
+            if not has_indicator and aria_required == "true":
+                has_indicator = True
 
             if has_indicator:
                 continue

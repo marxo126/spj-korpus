@@ -59,6 +59,11 @@ class MotionRule(BaseRule):
     def _check_animation_duration(self, ctx) -> list[Finding]:
         """Check @keyframes with infinite iteration."""
         findings: list[Finding] = []
+        # If the stylesheet already handles prefers-reduced-motion globally,
+        # infinite animations are acceptable (they get disabled for users
+        # who prefer reduced motion).
+        if ctx.css.has_prefers_reduced_motion:
+            return findings
         for kf in ctx.css.keyframes:
             if kf.iteration_count.lower() == "infinite":
                 findings.append(self._finding(

@@ -6,6 +6,7 @@ from rules.helpers import (
     contrast_ratio,
     is_large_text,
     parse_color,
+    parse_px,
     resolve_css_var,
 )
 
@@ -38,7 +39,7 @@ class ContrastRule(BaseRule):
                 fs = props.get("font-size", "")
                 bold = props.get("font-weight", "") in ("bold", "700", "800", "900")
                 if fs:
-                    px = _parse_px(fs)
+                    px = parse_px(fs)
                     if px and is_large_text(px, bold):
                         threshold = 3.0
                 if ratio < threshold:
@@ -89,15 +90,51 @@ class ContrastRule(BaseRule):
 
     def _check_dark_mode(self, css, text_min, ui_min) -> list[Finding]:
         findings: list[Finding] = []
+
+        import re as _re
+
+        def _clean_sel(s: str) -> str:
+            """Strip comments and whitespace from selector for comparison."""
+            s = _re.sub(r"/\*.*?\*/", "", s, flags=_re.DOTALL)
+            return " ".join(s.split()).strip()
+
+        # Build set of base selectors that have explicit html.dark overrides
+        # (these override colors explicitly, so variable-based checks are wrong)
+        dark_overridden: set[str] = set()
         for rule in css.rules:
+            sel = _clean_sel(rule.selector)
+            # Handle comma-separated selectors like "html.dark .form-group input, html.dark .form-group select"
+            for part in sel.split(","):
+                part = part.strip()
+                if part.startswith("html.dark "):
+                    base = part[len("html.dark "):].strip()
+                    dark_overridden.add(base)
+
+        for rule in css.rules:
+            # Only check rules that explicitly set BOTH color and background
             props = rule.properties
             fg_raw = props.get("color")
             bg_raw = props.get("background-color") or props.get("background")
             if not fg_raw or not bg_raw:
                 continue
+            # Skip rules already under html.dark (they define the dark theme itself)
+            if "html.dark" in rule.selector or ".dark " in rule.selector:
+                continue
+            # Check if ALL sub-selectors of this rule have dark overrides
+            sel_clean = _clean_sel(rule.selector)
+            sel_parts = [p.strip() for p in sel_clean.split(",")]
+            all_overridden = all(p in dark_overridden for p in sel_parts)
+            if all_overridden:
+                continue
             fg = self._resolve(fg_raw, css, mode="dark")
             bg = self._resolve(bg_raw, css, mode="dark")
-            if not fg or not bg or fg == fg_raw and bg == bg_raw:
+            if not fg or not bg:
+                continue
+            # Skip if neither value changed in dark mode (no CSS vars involved)
+            if fg == self._resolve(fg_raw, css, mode="light") and bg == self._resolve(bg_raw, css, mode="light"):
+                continue
+            # Skip if fg and bg resolve to the same value (mis-paired)
+            if fg == bg:
                 continue
             try:
                 ratio = contrast_ratio(fg, bg)
@@ -163,13 +200,3 @@ class ContrastRule(BaseRule):
                 return parts[1].strip()
             return None
         return value
-
-
-def _parse_px(value: str) -> float | None:
-    value = value.strip().lower()
-    if value.endswith("px"):
-        try:
-            return float(value[:-2])
-        except ValueError:
-            return None
-    return None

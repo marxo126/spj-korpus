@@ -4,9 +4,9 @@ from __future__ import annotations
 import re
 
 from rules.base import BaseRule, Finding, Severity
+from rules.helpers import parse_px
 
 
-_PX_RE = re.compile(r"^([\d.]+)\s*px$", re.I)
 _CH_RE = re.compile(r"^([\d.]+)\s*ch$", re.I)
 
 
@@ -29,7 +29,7 @@ class TypographyRule(BaseRule):
             # min-font-size
             fs = props.get("font-size", "")
             if fs:
-                px = _parse_px(fs)
+                px = parse_px(fs)
                 if px is not None and px < min_font:
                     findings.append(self._finding(
                         check_id="min-font-size",
@@ -59,11 +59,16 @@ class TypographyRule(BaseRule):
                     impact=("low-vision",),
                 ))
 
-            # line-height
+            # line-height — skip icon, toggle, btn, emoji selectors (not body text)
             lh = props.get("line-height", "")
             if lh:
                 lh_val = _parse_unitless(lh)
-                if lh_val is not None and lh_val < min_lh:
+                sel_lower = rule.selector.lower()
+                is_non_text = any(kw in sel_lower for kw in (
+                    "icon", "toggle", "btn", "emoji", "dot", "rec-dot",
+                    "badge", "indicator", "overlay",
+                ))
+                if lh_val is not None and lh_val < min_lh and not is_non_text:
                     findings.append(self._finding(
                         check_id="line-height",
                         severity=Severity.MODERATE,
@@ -129,10 +134,6 @@ class TypographyRule(BaseRule):
 
         return findings
 
-
-def _parse_px(value: str) -> float | None:
-    m = _PX_RE.match(value.strip())
-    return float(m.group(1)) if m else None
 
 
 def _parse_unitless(value: str) -> float | None:

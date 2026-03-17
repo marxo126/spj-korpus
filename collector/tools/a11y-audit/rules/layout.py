@@ -4,14 +4,9 @@ from __future__ import annotations
 import re
 
 from rules.base import BaseRule, Finding, Severity
-from rules.helpers import iter_elements
+from rules.helpers import is_interactive_selector, iter_elements, parse_px
 
-_PX_RE = re.compile(r"^([\d.]+)\s*px$", re.I)
 _INTERACTIVE_TAGS = frozenset(("button", "a", "input", "select", "textarea"))
-_INTERACTIVE_SEL_RE = re.compile(
-    r"(?:^|[\s,>+~])(?:button|a(?=[.#\[:>\s,+~]|$)|input|select|textarea)"
-    r"|\.btn|\[type=",
-)
 
 
 class LayoutRule(BaseRule):
@@ -41,14 +36,16 @@ class LayoutRule(BaseRule):
             sel = rule.selector.lower()
 
             # target-size checks on interactive selectors
-            if self._is_interactive_selector(sel):
+            sel_is_interactive = is_interactive_selector(sel)
+            if sel_is_interactive:
                 self._check_target_size(
                     rule, props, findings, target_aa, target_enh,
                 )
 
             # spacing — only flag when margin/gap is explicitly set to 0
-            # or negative, not when it's simply absent
-            if self._is_interactive_selector(sel):
+            # or negative, not when it's simply absent.
+            # Skip elements inside flex/grid containers with gap (parent handles spacing).
+            if sel_is_interactive:
                 margin = props.get("margin", "")
                 gap = props.get("gap", "")
                 margin_val = margin.strip().rstrip(";").strip() if margin else ""
@@ -57,6 +54,18 @@ class LayoutRule(BaseRule):
                 is_zero_margin = margin_val in ("0", "0px", "0em", "0rem")
                 is_zero_gap = gap_val in ("0", "0px", "0em", "0rem")
                 has_negative = margin_val.lstrip().startswith("-")
+                # Skip child elements in containers that use gap for spacing
+                # (e.g., .radio-group input where parent .radio-group has gap)
+                if is_zero_margin and not is_zero_gap and not has_negative:
+                    # Check if parent selector likely has gap
+                    parent_parts = sel.rsplit(" ", 1)
+                    if len(parent_parts) > 1:
+                        parent_sel = parent_parts[0].strip()
+                        for pr in css.rules:
+                            if pr.selector.strip() == parent_sel:
+                                if pr.properties.get("gap") or pr.properties.get("flex-wrap"):
+                                    is_zero_margin = False
+                                    break
                 if is_zero_margin or is_zero_gap or has_negative:
                     findings.append(self._finding(
                         check_id="spacing",
@@ -90,7 +99,7 @@ class LayoutRule(BaseRule):
                 w = props.get("width", "")
                 mw = props.get("min-width", "")
                 for val, prop in ((w, "width"), (mw, "min-width")):
-                    px = _parse_px(val)
+                    px = parse_px(val)
                     if px is not None and px > 320:
                         findings.append(self._finding(
                             check_id="reflow-320",
@@ -142,10 +151,10 @@ class LayoutRule(BaseRule):
         return findings
 
     def _check_target_size(self, rule, props, findings, target_aa, target_enh):
-        min_h = _parse_px(props.get("min-height", ""))
-        min_w = _parse_px(props.get("min-width", ""))
-        height = _parse_px(props.get("height", ""))
-        width = _parse_px(props.get("width", ""))
+        min_h = parse_px(props.get("min-height", ""))
+        min_w = parse_px(props.get("min-width", ""))
+        height = parse_px(props.get("height", ""))
+        width = parse_px(props.get("width", ""))
 
         size = min(
             min_h or height or 999,
@@ -154,7 +163,7 @@ class LayoutRule(BaseRule):
         if size == 999:
             # Check padding as proxy
             p = props.get("padding", "")
-            px = _parse_px(p)
+            px = parse_px(p)
             if px is not None and px < 8:
                 findings.append(self._finding(
                     check_id="target-size-aa",
@@ -197,15 +206,3 @@ class LayoutRule(BaseRule):
                 impact=("motor",),
             ))
 
-    @staticmethod
-    def _is_interactive_selector(sel: str) -> bool:
-        # Strip CSS comments to avoid false matches (e.g., "a" in "Progress Bar")
-        sel_clean = re.sub(r"/\*.*?\*/", "", sel).strip()
-        return bool(_INTERACTIVE_SEL_RE.search(sel_clean))
-
-
-def _parse_px(value: str | None) -> float | None:
-    if not value:
-        return None
-    m = _PX_RE.match(value.strip())
-    return float(m.group(1)) if m else None
