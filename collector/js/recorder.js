@@ -408,8 +408,14 @@ async function onRecordingDone() {
     gateContainer.style.display = 'block';
     document.getElementById('preview-controls').style.display = 'none';
 
-    await QualityGate.loadModels();
-    const result = await QualityGate.analyze(recordedBlob);
+    let result;
+    try {
+        await QualityGate.loadModels();
+        result = await QualityGate.analyze(recordedBlob);
+    } catch (err) {
+        console.warn('QualityGate error, skipping:', err);
+        result = { passed: true, skipped: true };
+    }
 
     if (result.skipped || result.passed) {
         if (result.skipped) {

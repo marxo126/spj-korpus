@@ -62,24 +62,31 @@ const QualityGate = {
         const video = document.createElement('video');
         video.muted = true;
         video.playsInline = true;
+        video.preload = 'auto';
         video.src = URL.createObjectURL(blob);
+        video.load(); // iOS requires explicit load()
 
-        // Wait for metadata
+        // Wait for enough data to seek (iOS needs HAVE_ENOUGH_DATA, not just metadata)
         await new Promise((resolve, reject) => {
-            video.onloadedmetadata = resolve;
+            if (video.readyState >= 2) { resolve(); return; }
+            video.oncanplay = resolve;
             video.onerror = reject;
-            setTimeout(() => reject(new Error('Video metadata timeout')), 10000);
+            setTimeout(() => reject(new Error('Video load timeout')), 10000);
         });
 
+        // iOS Safari: must play() briefly so decoder initializes, then pause
+        try { await video.play(); } catch (e) { console.debug('QualityGate: play() rejected:', e.name); }
+        video.pause();
+
         const duration = video.duration;
-        if (!duration || duration < 0.5) {
+        if (!duration || !isFinite(duration) || duration < 0.5) {
             URL.revokeObjectURL(video.src);
             return { passed: true, skipped: true };
         }
 
         const canvas = document.createElement('canvas');
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+        canvas.width = video.videoWidth || 640;
+        canvas.height = video.videoHeight || 480;
         const ctx = canvas.getContext('2d');
 
         // Extract 5 frames
@@ -95,10 +102,13 @@ const QualityGate = {
         for (const time of positions) {
             // Seek to position
             video.currentTime = time;
-            await new Promise(resolve => {
-                video.onseeked = resolve;
-                setTimeout(resolve, 2000); // timeout
+            const seeked = await new Promise(resolve => {
+                video.onseeked = () => resolve(true);
+                setTimeout(() => resolve(false), 3000);
             });
+            if (!seeked) break; // bail on broken seeking
+            // Extra wait for iOS — frame may not be decoded yet after seeked fires
+            await new Promise(r => setTimeout(r, 50));
 
             ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 

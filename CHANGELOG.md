@@ -104,6 +104,9 @@
 - Dark mode contrast for terms page, consent cards
 - Quality status badges flickering after recording (rAF loop not stopped)
 - Themes page: PHP code rendered as text (broken `<?php` block after separator)
+- iPhone quality gate: black frames on iOS Safari (decoder needs play+pause before seeking)
+- Quality gate UI stuck on spinner if video load times out (unhandled promise rejection)
+- Quality gate analyzing blank frames on seek timeout (now bails early)
 
 ### Security
 - CSRF on all state-changing endpoints
