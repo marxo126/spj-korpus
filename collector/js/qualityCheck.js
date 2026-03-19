@@ -27,6 +27,13 @@ class QualityChecker {
         this.running = false;
     }
 
+    resume() {
+        if (!this.running) {
+            this.running = true;
+            this.loop();
+        }
+    }
+
     async loadModels() {
         try {
             // Import MediaPipe tasks-vision from CDN
@@ -76,6 +83,7 @@ class QualityChecker {
 
     check() {
         if (this.video.readyState < 2) return; // video not ready
+        if (this.video.paused || !this.video.srcObject) return; // camera not active
 
         const w = this.video.videoWidth;
         const h = this.video.videoHeight;

@@ -12,7 +12,7 @@ $user_id = $user['id'];
 $pdo = get_db();
 
 // Get all themes with word counts
-$themes = $pdo->query("
+$themes_stmt = $pdo->prepare("
     SELECT t.id, t.name, t.emoji, t.sort_order,
            COUNT(s.id) as word_count,
            COALESCE(SUM(s.total_recordings), 0) as total_recordings
@@ -20,7 +20,9 @@ $themes = $pdo->query("
     LEFT JOIN signs s ON s.theme_id = t.id
     GROUP BY t.id, t.name, t.emoji, t.sort_order
     ORDER BY t.sort_order ASC
-")->fetchAll();
+");
+$themes_stmt->execute();
+$themes = $themes_stmt->fetchAll();
 
 // Get user progress per theme
 $stmt = $pdo->prepare("
@@ -34,6 +36,14 @@ $progress = [];
 foreach ($progress_rows as $row) {
     $progress[$row['theme_id']] = $row;
 }
+
+// Sort: incomplete themes first (by sort_order), completed at the bottom
+usort($themes, function ($a, $b) use ($progress) {
+    $a_done = !empty($progress[$a['id']]['completed_at']);
+    $b_done = !empty($progress[$b['id']]['completed_at']);
+    if ($a_done !== $b_done) return $a_done ? 1 : -1;
+    return $a['sort_order'] <=> $b['sort_order'];
+});
 
 // Find suggested theme (fewest total recordings globally)
 $suggested_id = null;
@@ -67,10 +77,38 @@ require_once __DIR__ . '/includes/header.php';
     </div>
 </div>
 
-<h2 style="margin-bottom: 16px;">Vyberte tému</h2>
+<?php
+$total_themes = count($themes);
+$completed_themes = count(array_filter($progress, fn($p) => !empty($p['completed_at'])));
+$remaining_themes = $total_themes - $completed_themes;
+?>
+<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px;">
+    <h2 style="margin:0;">Vyberte tému</h2>
+    <span style="font-size:14px;color:var(--gray);font-weight:600;">
+        <?= $completed_themes ?> z <?= $total_themes ?> dokončených
+        <?php if ($remaining_themes > 0): ?>
+        · <span style="color:var(--green);"><?= $remaining_themes ?> čaká</span>
+        <?php endif; ?>
+    </span>
+</div>
 
+<?php
+// Find index where completed themes start
+$completed_start = null;
+foreach ($themes as $idx => $t) {
+    if (!empty($progress[$t['id']]['completed_at'])) { $completed_start = $idx; break; }
+}
+?>
 <div class="theme-grid">
-    <?php foreach ($themes as $theme):
+    <?php foreach ($themes as $idx => $theme):
+        if ($idx === $completed_start && $completed_start > 0): ?>
+    </div>
+    <div style="margin:16px 0 8px;padding-top:12px;border-top:2px solid var(--light-gray);display:flex;align-items:center;gap:8px;">
+        <span style="font-size:13px;font-weight:700;color:var(--gray);">Dokončené témy</span>
+        <span style="font-size:12px;color:var(--gray);">(<?= $completed_themes ?>)</span>
+    </div>
+    <div class="theme-grid">
+        <?php endif;
         $user_count = $progress[$theme['id']]['recordings_count'] ?? 0;
         $completed = !empty($progress[$theme['id']]['completed_at']);
         $is_suggested = ($theme['id'] == $suggested_id);

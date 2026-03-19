@@ -311,10 +311,10 @@ require_once __DIR__ . '/includes/header.php';
         </h3>
 
         <div class="form-group">
-            <label for="school">Škola pre nepočujúcich <span class="req">*</span></label>
-            <input type="text" id="school" name="school" placeholder="napr. Kremnica, Bratislava, Lučenec..." required aria-required="true"
+            <label for="school">Škola pre nepočujúcich</label>
+            <input type="text" id="school" name="school" placeholder="napr. Kremnica, Bratislava, Lučenec..."
                    value="<?= htmlspecialchars($_POST['school'] ?? '') ?>">
-            <span style="font-size: 12px; color: var(--gray);">Ak ste navštevovali — ovplyvňuje štýl posunkovania a dialekt.</span>
+            <span style="font-size: 12px; color: var(--gray);">Nepovinné. Ak ste navštevovali — pomáha nám určiť dialekt a štýl posunkovania.</span>
         </div>
         <div class="form-group">
             <label for="location">Mesto / región <span class="req">*</span></label>

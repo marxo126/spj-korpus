@@ -928,6 +928,15 @@ h3 { font-size: 1rem; font-weight: 600; color: var(--gray); }
     border-radius: 8px;
     font-size: 0.875rem;
 }
+.variant-badge {
+    display: inline-block;
+    font-size: 12px;
+    background: #DBEAFE;
+    color: #1E40AF;
+    padding: 3px 10px;
+    border-radius: 6px;
+    font-weight: 600;
+}
 .storage-bar {
     height: 24px;
     background: var(--light-gray);
@@ -1095,6 +1104,7 @@ html.dark .theme-card {
     border-color: #64748B;
 }
 /* Footer and cookie banner */
+html.dark .variant-badge { background: #1E3A5F; color: #93C5FD; }
 html.dark footer { border-color: #475569 !important; }
 html.dark footer img[alt="Innosign"] { filter: invert(1) hue-rotate(180deg); }
 html.dark #cookie-banner { background: #020617 !important; }

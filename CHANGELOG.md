@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Added — Collector (zber.spj.sk)
+- Page view analytics with GDPR-safe IP hashing (daily salt), device detection, bot filtering
+- Admin "Metriky" tab — KPIs, hourly/daily trend charts, top pages, referrers, device breakdown, storage gauge
+- `daily_metrics` table for pre-aggregated historical data (auto-aggregate + prune)
+- `/api/status.php` health check endpoint for uptime monitoring
+- Variant recording support — when all signs in a theme are done, offers signs below target for additional recordings
+- `+ ďalší variant` badge in recorder UI when serving variant signs
+- Themes page: progress counter ("5 z 68 dokončených · 63 čaká"), completed themes sorted to bottom with separator
+- "Hotovo!" screen with clear CTA buttons ("Vybrať ďalšiu tému →")
+- Composite index `idx_recordings_sign_user` for variant query performance
+
+### Changed — Collector
+- Registration: "Škola pre nepočujúcich" field now optional (CODA, deaf from mainstream schools can skip)
+- Quality checker stops during recording review, resumes on camera return (saves battery on mobile)
+- `updateQualityStatus()` guards against both `isRecording` and `reviewingRecording` states
+- `qualityCheck.js`: early bail when video is paused or stream detached
+- Disk metrics use hosting quota (`du -sb` + `STORAGE_LIMIT_GB`) instead of shared server `disk_free_space()`
+- Server health panel shows DB size + quota instead of misleading shared-host load/RAM
+- All SQL analytics queries use range predicates instead of `DATE()` wrapper (enables index usage)
+- Metrics page reads from `daily_metrics` for past periods instead of scanning raw `page_views`
+- `SELECT COUNT(*)` on page_views replaced with `information_schema.TABLE_ROWS` (no full scan)
+- Aggregate button skips already-aggregated days
+- CTA buttons and variant badge use CSS classes instead of inline styles
+- Proper Slovak diacritics throughout metrics UI (ľščťžýáíé)
+
 ### Added
 - Dual-view video splitting for category-source — extract poses from both 60° and 90° camera angles separately
 - `crop` parameter on `extract_pose()` — crop frames in-memory before MediaPipe processing

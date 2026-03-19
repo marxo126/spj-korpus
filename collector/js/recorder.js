@@ -154,15 +154,21 @@ async function loadNextSign() {
             const isThemeDone = sign.error === 'all_done' && themeEl && themeSetEl && themeSetEl.value === '1';
             document.getElementById('word-display').textContent = '🎉 Hotovo!';
             document.getElementById('help-links').innerHTML = isThemeDone
-                ? 'Všetky posunky v tejto téme sú nahrané. <a href="/themes.php">Späť na témy</a>'
-                : 'Všetky posunky sú nahrané.';
+                ? '<strong>Všetky posunky v tejto téme máte nahrané!</strong><br>'
+                  + '<a href="/themes.php" class="btn btn-green" style="display:inline-block;margin-top:10px;">Vybrať ďalšiu tému →</a>'
+                : '<strong>Výborne! Všetky posunky sú nahrané.</strong><br>'
+                  + '<a href="/themes.php" class="btn btn-blue" style="display:inline-block;margin-top:10px;">Pozrieť témy →</a>';
             document.getElementById('record-btn').classList.add('disabled');
             return;
         }
 
         currentSign = sign;
         document.getElementById('word-display').textContent = sign.word_sk.toUpperCase();
-        document.getElementById('help-links').innerHTML = 'Nepoznáte posunok? → ' + buildRefLinks(sign);
+        var helpHtml = 'Nepoznáte posunok? → ' + buildRefLinks(sign);
+        if (sign.variant) {
+            helpHtml = '<span class="variant-badge">+ ďalší variant</span> ' + helpHtml;
+        }
+        document.getElementById('help-links').innerHTML = helpHtml;
 
     } catch (err) {
         console.error('Failed to load next sign:', err);
@@ -171,8 +177,8 @@ async function loadNextSign() {
 
 // ── Quality status callback ──
 function updateQualityStatus(status) {
-    // During recording: don't update UI, just wait for manual stop or 5s timer
-    if (isRecording) return;
+    // During recording or review: don't update UI
+    if (isRecording || reviewingRecording) return;
 
     const container = document.getElementById('camera-container');
     const banner = document.getElementById('camera-banner');
@@ -381,6 +387,7 @@ function stopRecording() {
 async function onRecordingDone() {
     isRecording = false;
     reviewingRecording = true;
+    if (qualityChecker) qualityChecker.stop();
     recordedDurationMs = Date.now() - recordingStartTime;
     recordedBlob = new Blob(recordedChunks, { type: mediaRecorder.mimeType });
 
@@ -458,6 +465,7 @@ function resetToCamera() {
     document.getElementById('record-btn').className = 'record-btn';
     document.getElementById('record-btn').onclick = startRecording;
     document.getElementById('record-btn').focus();
+    if (qualityChecker) qualityChecker.resume();
 }
 
 function isValidHttpUrl(url) {
